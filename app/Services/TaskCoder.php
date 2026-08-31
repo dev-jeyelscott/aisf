@@ -138,6 +138,66 @@ class TaskCoder
     }
 
     /**
+     * Resume the approved Task's Coder session for its one permitted commit-only finalization run.
+     *
+     * @return array{commit_sha: string, commit_message: string}
+     */
+    public function finalizeCommit(Task $task): array
+    {
+        $task->loadMissing('workRequest.project');
+
+        if ($task->status !== 'committing' || $task->approved_at === null) {
+            throw new UnexpectedValueException('Only a persistently QA-approved Task may enter Coder commit finalization.');
+        }
+
+        if (blank($task->worktree_path) || ! is_dir($task->worktree_path)) {
+            throw new UnexpectedValueException('The approved Task worktree must exist before Coder commit finalization can run.');
+        }
+
+        $agent = $task->workRequest->project->agents()
+            ->where('role', 'coder')
+            ->where('enabled', true)
+            ->first();
+
+        if ($agent === null) {
+            throw new UnexpectedValueException('The Project requires an enabled Coder Agent before commit finalization can run.');
+        }
+
+        $session = $task->agentSessions()
+            ->where('project_agent_id', $agent->id)
+            ->first();
+
+        if ($session === null || ! $session->runs()->where('status', 'succeeded')->exists()) {
+            throw new UnexpectedValueException('A successful existing Coder Task session is required before commit finalization can resume.');
+        }
+
+        $context = $this->contextAssembler->coderCommitDelta();
+        $run = $this->sessionManager->startRun($session, 'coder_commit', $context);
+        $result = null;
+
+        try {
+            $result = $session->provider_session_id !== null
+                ? $this->harness->resume($agent, (string) $task->worktree_path, (string) $session->provider_session_id, $context['input'], $this->commitCompletionSchema(), writable: true)
+                : $this->harness->start($agent, (string) $task->worktree_path, $context['input'], $this->commitCompletionSchema(), writable: true);
+
+            $this->sessionManager->captureProviderSessionId($session, $result->providerSessionId);
+
+            if (! $result->successful || $result->output === null) {
+                throw new RuntimeException($result->failureMessage ?? 'Coder commit finalization failed.');
+            }
+
+            $completion = $this->validateCommitOutput($result->output);
+            $this->sessionManager->completeRun($run, $completion['commit_message'], $result->exitCode);
+
+            return $completion;
+        } catch (Throwable $exception) {
+            $this->sessionManager->failRun($run, $exception, $result?->exitCode);
+
+            throw $exception;
+        }
+    }
+
+    /**
      * Build the exact JSON schema required from either supported Coder harness.
      *
      * @return array<string, mixed>
@@ -162,6 +222,48 @@ class TaskCoder
                     ],
                 ],
             ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function commitCompletionSchema(): array
+    {
+        return [
+            'type' => 'object',
+            'additionalProperties' => false,
+            'required' => ['commit_sha', 'commit_message'],
+            'properties' => [
+                'commit_sha' => ['type' => 'string', 'minLength' => 40, 'maxLength' => 64],
+                'commit_message' => ['type' => 'string', 'minLength' => 1],
+            ],
+        ];
+    }
+
+    /** @return array{commit_sha: string, commit_message: string} */
+    private function validateCommitOutput(string $output): array
+    {
+        try {
+            $completion = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new UnexpectedValueException('The Coder returned malformed commit finalization JSON.', previous: $exception);
+        }
+
+        if (! is_array($completion) || array_is_list($completion) || array_diff(array_keys($completion), ['commit_sha', 'commit_message']) !== [] || count($completion) !== 2) {
+            throw new UnexpectedValueException('Coder commit finalization response contains missing or unexpected fields.');
+        }
+
+        $validator = Validator::make($completion, [
+            'commit_sha' => ['required', 'string', 'regex:/^[0-9a-f]{40,64}$/'],
+            'commit_message' => ['required', 'string'],
+        ]);
+
+        if ($validator->fails() || trim((string) $completion['commit_message']) === '') {
+            throw new UnexpectedValueException('The Coder response does not satisfy the required commit finalization contract.');
+        }
+
+        return [
+            'commit_sha' => trim((string) $completion['commit_sha']),
+            'commit_message' => trim((string) $completion['commit_message']),
         ];
     }
 

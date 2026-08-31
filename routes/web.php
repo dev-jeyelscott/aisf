@@ -16,6 +16,7 @@ Route::resource('projects.skills', ProjectSkillController::class)->except(['show
 Route::post('projects/{project}/work-requests', [WorkRequestController::class, 'store'])->name('projects.work-requests.store');
 Route::post('projects/{project}/tasks/{task}/start', [TaskController::class, 'start'])->name('projects.tasks.start');
 Route::post('projects/{project}/tasks/{task}/resume', [TaskController::class, 'resume'])->name('projects.tasks.resume');
+Route::post('projects/{project}/tasks/{task}/commit', [TaskController::class, 'commit'])->name('projects.tasks.commit');
 Route::post('projects/{project}/tasks/{task}/qa-reviews', [QaReviewController::class, 'store'])->name('projects.tasks.qa-reviews.store');
 Route::post('projects/{project}/tasks/{task}/qa-reviews/confirm-browser-check', [QaReviewController::class, 'confirmBrowserCheck'])->name('projects.tasks.qa-reviews.confirm-browser-check');
 

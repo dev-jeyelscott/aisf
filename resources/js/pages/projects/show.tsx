@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
 import {
+    commit as commitTask,
     resume as resumeTask,
     start as startTask,
 } from '@/routes/projects/tasks';
@@ -111,6 +112,12 @@ type Task = {
     worktree_path: string | null;
     blocked_reason: string | null;
     approved_at: string | null;
+    commit_sha: string | null;
+    commit_message: string | null;
+    integrated_sha: string | null;
+    integrated_at: string | null;
+    worktree_cleaned_at: string | null;
+    branch_deleted_at: string | null;
     changed_files: string[];
     agent_sessions: AgentSession[];
     qa_reviews: QaReview[];
@@ -756,6 +763,95 @@ export default function ProjectWorkspace({
                                                         and browser acceptance
                                                         are recorded below.
                                                     </p>
+                                                    <Form
+                                                        {...commitTask.form([
+                                                            project.id,
+                                                            task.id,
+                                                        ])}
+                                                        className="mt-3"
+                                                    >
+                                                        {({ processing }) => (
+                                                            <Button
+                                                                type="submit"
+                                                                size="sm"
+                                                                disabled={
+                                                                    processing
+                                                                }
+                                                            >
+                                                                Finalize approved
+                                                                commit
+                                                            </Button>
+                                                        )}
+                                                    </Form>
+                                                </div>
+                                            )}
+
+                                            {(task.status === 'committing' ||
+                                                task.status ===
+                                                    'integrating') && (
+                                                <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-600/10 p-3">
+                                                    <h5 className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                                        {task.status ===
+                                                        'committing'
+                                                            ? 'Coder is finalizing the approved commit'
+                                                            : 'Integrating approved commit'}
+                                                    </h5>
+                                                    <p className="text-muted-foreground mt-1 text-sm">
+                                                        The Task remains QA-gated;
+                                                        integration performs no
+                                                        additional AI review.
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {task.commit_sha && (
+                                                <div className="border-border bg-muted/20 mt-4 rounded-md border p-3">
+                                                    <h5 className="text-sm font-medium">
+                                                        Approved commit
+                                                    </h5>
+                                                    <dl className="text-muted-foreground mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                                                        <div>
+                                                            <dt>Message</dt>
+                                                            <dd className="text-foreground mt-0.5 font-mono break-words">
+                                                                {
+                                                                    task.commit_message
+                                                                }
+                                                            </dd>
+                                                        </div>
+                                                        <div>
+                                                            <dt>SHA</dt>
+                                                            <dd className="text-foreground mt-0.5 font-mono break-all">
+                                                                {task.commit_sha}
+                                                            </dd>
+                                                        </div>
+                                                    </dl>
+                                                    {task.integrated_sha && (
+                                                        <p className="text-muted-foreground mt-3 text-sm">
+                                                            Integrated successfully
+                                                            at{' '}
+                                                            {formatTimestamp(
+                                                                task.integrated_at,
+                                                            )}
+                                                            . Project HEAD: {' '}
+                                                            <code className="bg-muted rounded px-1.5 py-0.5 text-xs">
+                                                                {
+                                                                    task.integrated_sha
+                                                                }
+                                                            </code>
+                                                        </p>
+                                                    )}
+                                                    {task.worktree_cleaned_at && (
+                                                        <p className="text-muted-foreground mt-2 text-sm">
+                                                            Task worktree cleaned
+                                                            up at{' '}
+                                                            {formatTimestamp(
+                                                                task.worktree_cleaned_at,
+                                                            )}
+                                                            {task.branch_deleted_at
+                                                                ? '; temporary Task branch deleted.'
+                                                                : '; temporary Task branch retained because it could not be safely deleted.'}
+                                                        </p>
+                                                    )}
                                                 </div>
                                             )}
 

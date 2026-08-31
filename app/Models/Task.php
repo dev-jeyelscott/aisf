@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property list<string> $verification_commands
  * @property list<string> $browser_steps
  */
-#[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'approved_at'])]
+#[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'approved_at', 'commit_sha', 'commit_message', 'integrated_sha', 'integrated_at', 'worktree_cleaned_at', 'branch_deleted_at'])]
 class Task extends Model
 {
     /** @use HasFactory<TaskFactory> */
@@ -32,6 +32,9 @@ class Task extends Model
             'verification_commands' => 'array',
             'browser_steps' => 'array',
             'approved_at' => 'datetime',
+            'integrated_at' => 'datetime',
+            'worktree_cleaned_at' => 'datetime',
+            'branch_deleted_at' => 'datetime',
         ];
     }
 

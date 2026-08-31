@@ -184,8 +184,14 @@ class ProjectController extends Controller
                 'branch_name',
                 'worktree_path',
                 'blocked_reason',
+                'commit_sha',
+                'commit_message',
+                'integrated_sha',
             ]),
             'approved_at' => $task->approved_at?->toIso8601String(),
+            'integrated_at' => $task->integrated_at?->toIso8601String(),
+            'worktree_cleaned_at' => $task->worktree_cleaned_at?->toIso8601String(),
+            'branch_deleted_at' => $task->branch_deleted_at?->toIso8601String(),
             'changed_files' => filled($task->worktree_path)
                 ? $worktreeManager->changedFiles($task)
                 : [],

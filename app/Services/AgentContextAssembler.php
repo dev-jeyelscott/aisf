@@ -276,6 +276,29 @@ PROMPT;
     }
 
     /**
+     * Build the minimal QA-approved Coder finalization delta.
+     *
+     * @return array{mode: string, input: string, sources: list<array{type: string, label: string}>}
+     */
+    public function coderCommitDelta(): array
+    {
+        return [
+            'mode' => 'delta',
+            'input' => <<<'PROMPT'
+QA APPROVED COMMIT FINALIZATION
+
+Quality Assurance has approved the current Task worktree. Source changes are complete.
+Inspect the final Git diff and create exactly one conventional commit that accurately describes the approved Task.
+Do not perform new feature work or make source changes. Return the resulting commit SHA and commit message in the required structured response.
+PROMPT,
+            'sources' => [
+                ['type' => 'qa_approval', 'label' => 'Persisted QA approval'],
+                ['type' => 'commit_contract', 'label' => 'Commit-only Coder finalization contract'],
+            ],
+        ];
+    }
+
+    /**
      * Build the exact permitted initial QA context.
      *
      * @param  list<string>  $changedFiles

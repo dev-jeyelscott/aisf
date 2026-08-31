@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessTaskCoding;
+use App\Jobs\ProcessTaskCommit;
 use App\Models\Project;
 use App\Models\Task;
 use Illuminate\Http\RedirectResponse;
@@ -37,6 +38,20 @@ class TaskController extends Controller
 
         if ($task->status === 'changes_required') {
             ProcessTaskCoding::dispatch($task, $validated['operator_instruction'] ?? null);
+        }
+
+        return to_route('projects.show', $project);
+    }
+
+    /**
+     * Queue the approved Task's one Coder-authored commit finalization and deterministic integration.
+     */
+    public function commit(Project $project, Task $task): RedirectResponse
+    {
+        abort_unless((int) $task->workRequest->project_id === $project->id, 404);
+
+        if ($task->status === 'approved' && $task->approved_at !== null) {
+            ProcessTaskCommit::dispatch($task);
         }
 
         return to_route('projects.show', $project);
