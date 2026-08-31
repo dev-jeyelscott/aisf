@@ -14,14 +14,23 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property list<string> $verification_commands
  * @property list<string> $browser_steps
  */
-#[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'approved_at', 'commit_sha', 'commit_message', 'integrated_sha', 'integrated_at', 'worktree_cleaned_at', 'branch_deleted_at'])]
+#[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'last_handoff', 'approved_at', 'commit_sha', 'commit_message', 'integrated_sha', 'integrated_at', 'worktree_cleaned_at', 'branch_deleted_at'])]
 class Task extends Model
 {
     /** @use HasFactory<TaskFactory> */
     use HasFactory;
 
     /**
-     * Cast structured planning collections and the QA approval timestamp.
+     * Default to pending: eligible for the dispatcher, no execution yet.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'status' => 'pending',
+    ];
+
+    /**
+     * Cast structured planning collections, the most recent Agent handoff, and execution timestamps.
      *
      * @return array<string, string>
      */
@@ -31,6 +40,7 @@ class Task extends Model
             'acceptance_criteria' => 'array',
             'verification_commands' => 'array',
             'browser_steps' => 'array',
+            'last_handoff' => 'array',
             'approved_at' => 'datetime',
             'integrated_at' => 'datetime',
             'worktree_cleaned_at' => 'datetime',
@@ -49,6 +59,16 @@ class Task extends Model
     }
 
     /**
+     * Return the earlier-position Task this Task depends on, if any.
+     *
+     * @return BelongsTo<Task, $this>
+     */
+    public function dependsOn(): BelongsTo
+    {
+        return $this->belongsTo(Task::class, 'depends_on_task_id');
+    }
+
+    /**
      * Return Coder and QA logical sessions associated with this Task.
      *
      * @return HasMany<AgentSession, $this>
@@ -56,15 +76,5 @@ class Task extends Model
     public function agentSessions(): HasMany
     {
         return $this->hasMany(AgentSession::class);
-    }
-
-    /**
-     * Return QA review evidence in the order it was produced.
-     *
-     * @return HasMany<QaReview, $this>
-     */
-    public function qaReviews(): HasMany
-    {
-        return $this->hasMany(QaReview::class)->orderBy('id');
     }
 }

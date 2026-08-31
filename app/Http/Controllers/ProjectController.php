@@ -7,7 +7,6 @@ use App\Http\Requests\UpdateProjectRequest;
 use App\Models\AgentRun;
 use App\Models\AgentSession;
 use App\Models\Project;
-use App\Models\QaReview;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\ProjectAgentProvisioner;
@@ -69,7 +68,6 @@ class ProjectController extends Controller
                 'agentSessions.runs',
                 'tasks.agentSessions.projectAgent',
                 'tasks.agentSessions.runs',
-                'tasks.qaReviews',
             ])
             ->orderBy('id')
             ->get()
@@ -141,6 +139,7 @@ class ProjectController extends Controller
                 'summary',
                 'evidence',
                 'failure_reason',
+                'last_handoff',
             ]),
             'agent_sessions' => $workRequest->agentSessions
                 ->sortByDesc('updated_at')
@@ -161,7 +160,7 @@ class ProjectController extends Controller
     }
 
     /**
-     * Serialize one Task together with worktree lifecycle metadata and recent Agent session activity.
+     * Serialize one Task together with its most recent Agent handoff and recent Agent session activity.
      *
      * @return array<string, mixed>
      */
@@ -175,23 +174,15 @@ class ProjectController extends Controller
                 'title',
                 'objective',
                 'implementation_spec',
-                'acceptance_criteria',
-                'verification_commands',
-                'browser_steps',
                 'status',
-                'base_branch',
-                'base_sha',
                 'branch_name',
                 'worktree_path',
                 'blocked_reason',
+                'last_handoff',
                 'commit_sha',
-                'commit_message',
                 'integrated_sha',
             ]),
-            'approved_at' => $task->approved_at?->toIso8601String(),
             'integrated_at' => $task->integrated_at?->toIso8601String(),
-            'worktree_cleaned_at' => $task->worktree_cleaned_at?->toIso8601String(),
-            'branch_deleted_at' => $task->branch_deleted_at?->toIso8601String(),
             'changed_files' => filled($task->worktree_path)
                 ? $worktreeManager->changedFiles($task)
                 : [],
@@ -204,33 +195,6 @@ class ProjectController extends Controller
                 )
                 ->values()
                 ->all(),
-            'qa_reviews' => $task->qaReviews
-                ->sortByDesc('id')
-                ->map(
-                    fn (QaReview $review): array => $this->qaReviewPayload($review),
-                )
-                ->values()
-                ->all(),
-        ];
-    }
-
-    /**
-     * Serialize one QA review with its structured evidence and operator confirmation state.
-     *
-     * @return array<string, mixed>
-     */
-    private function qaReviewPayload(QaReview $review): array
-    {
-        return [
-            'id' => $review->id,
-            'status' => $review->status,
-            'summary' => $review->summary,
-            'acceptance_criteria_results' => $review->acceptance_criteria_results,
-            'verification_results' => $review->verification_results,
-            'browser_result' => $review->browser_result,
-            'findings' => $review->findings,
-            'operator_confirmed_at' => $review->operator_confirmed_at?->toIso8601String(),
-            'created_at' => $review->created_at?->toIso8601String(),
         ];
     }
 

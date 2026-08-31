@@ -12,8 +12,6 @@ use UnexpectedValueException;
 
 class TaskWorktreeManager
 {
-    private const CONVENTIONAL_COMMIT_PATTERN = '/^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\\([a-z0-9._-]+\\))?!?: .+$/i';
-
     public function __construct(
         private readonly RepositoryInspector $repositoryInspector,
     ) {}
@@ -72,29 +70,6 @@ class TaskWorktreeManager
     }
 
     /**
-     * Confirm the Task worktree HEAD still equals the captured base SHA, detecting an accidental pre-QA commit.
-     */
-    public function headMatchesBase(Task $task): bool
-    {
-        $worktreePath = (string) $task->worktree_path;
-        $baseSha = (string) $task->base_sha;
-
-        if ($worktreePath === '' || $baseSha === '') {
-            throw new UnexpectedValueException(
-                'The Task worktree must be created before its Git boundary can be verified.',
-            );
-        }
-
-        $result = $this->run($worktreePath, ['git', 'rev-parse', 'HEAD']);
-
-        if ($result === null || $result->failed()) {
-            throw new RuntimeException('Unable to inspect the Task worktree HEAD.');
-        }
-
-        return trim($result->output()) === $baseSha;
-    }
-
-    /**
      * List the Task worktree's currently changed, repository-relative file paths.
      *
      * @return list<string>
@@ -130,54 +105,32 @@ class TaskWorktreeManager
     }
 
     /**
-     * Verify the one Coder-authored commit created from the approved Task worktree.
-     *
-     * @return array{commit_sha: string, commit_message: string}
+     * Verify the Agent-reported commit actually exists in the Task worktree before recording or integrating it.
      */
-    public function verifyApprovedCommit(Task $task): array
+    public function verifyCommitExists(Task $task, string $commitSha): string
     {
         $worktreePath = (string) $task->worktree_path;
-        $baseSha = (string) $task->base_sha;
-        $branchName = (string) $task->branch_name;
+        $commitSha = trim($commitSha);
 
-        if ($worktreePath === '' || ! is_dir($worktreePath) || $baseSha === '' || $branchName === '') {
-            throw new UnexpectedValueException('The approved Task is missing the Git worktree information required to verify its commit.');
+        if ($worktreePath === '' || ! is_dir($worktreePath) || $commitSha === '') {
+            throw new UnexpectedValueException('The Task worktree and a commit SHA are required to verify a reported commit.');
         }
 
-        $head = $this->requiredOutput($worktreePath, ['git', 'rev-parse', 'HEAD'], 'Unable to inspect the approved Task commit.');
-        $commitCount = $this->requiredOutput($worktreePath, ['git', 'rev-list', '--count', "{$baseSha}..{$head}"], 'Unable to count commits created by the Task.');
+        $result = $this->run($worktreePath, ['git', 'cat-file', '-e', $commitSha.'^{commit}']);
 
-        if ($commitCount !== '1') {
-            throw new UnexpectedValueException('The approved Task must create exactly one new commit from its recorded base.');
+        if ($result === null || $result->failed()) {
+            throw new UnexpectedValueException('The Agent reported a commit SHA that does not exist in the Task worktree.');
         }
 
-        $branchHead = $this->requiredOutput($worktreePath, ['git', 'rev-parse', $branchName], 'The approved Task commit is not on its Task branch.');
-
-        if ($branchHead !== $head) {
-            throw new UnexpectedValueException('The approved Task commit is not the HEAD of its Task branch.');
-        }
-
-        $message = $this->requiredOutput($worktreePath, ['git', 'log', '-1', '--format=%s', $head], 'Unable to read the approved Task commit message.');
-
-        if (preg_match(self::CONVENTIONAL_COMMIT_PATTERN, $message) !== 1) {
-            throw new UnexpectedValueException('The approved Task commit message must use conventional commit syntax.');
-        }
-
-        $status = $this->requiredOutput($worktreePath, ['git', '--no-optional-locks', 'status', '--porcelain=v1'], 'Unable to verify whether the approved Task worktree is clean.');
-
-        if ($status !== '') {
-            throw new UnexpectedValueException('The approved Task worktree still contains uncommitted changes after its commit.');
-        }
-
-        return ['commit_sha' => $head, 'commit_message' => $message];
+        return $this->requiredOutput($worktreePath, ['git', 'rev-parse', $commitSha], 'Unable to resolve the reported commit SHA.');
     }
 
     /**
-     * Fast-forward the original Project branch, then clean the integrated Task workspace without invoking an Agent.
+     * Fast-forward the original Project branch to a verified commit, then clean the integrated Task workspace without invoking an Agent.
      *
      * @return array{commit_sha: string, worktree_cleaned: bool, branch_deleted: bool}
      */
-    public function integrateApprovedCommit(Task $task): array
+    public function integrateCommit(Task $task, string $commitSha): array
     {
         $task->loadMissing('workRequest.project');
         $projectPath = $this->repositoryInspector->normalizePath($task->workRequest->project->path);
@@ -189,11 +142,11 @@ class TaskWorktreeManager
 
         $branchName = (string) $task->branch_name;
         $baseBranch = (string) $task->base_branch;
-        $commitSha = (string) $task->commit_sha;
+        $commitSha = trim($commitSha);
         $worktreePath = (string) $task->worktree_path;
 
         if ($branchName === '' || $baseBranch === '' || $commitSha === '' || $worktreePath === '' || ! is_dir($worktreePath)) {
-            throw new UnexpectedValueException('The verified Task is missing Git information required for integration.');
+            throw new UnexpectedValueException('The Task is missing Git information required for integration.');
         }
 
         $currentBranch = $this->requiredOutput($projectPath, ['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], 'The Project repository must be on its original branch before integration.');

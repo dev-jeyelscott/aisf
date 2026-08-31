@@ -9,14 +9,23 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['prompt', 'status', 'summary', 'evidence', 'failure_reason'])]
+#[Fillable(['prompt', 'status', 'summary', 'evidence', 'failure_reason', 'last_handoff'])]
 class WorkRequest extends Model
 {
     /** @use HasFactory<WorkRequestFactory> */
     use HasFactory;
 
     /**
-     * Cast persisted planning evidence.
+     * Default to pending: eligible for the dispatcher, no execution yet.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'status' => 'pending',
+    ];
+
+    /**
+     * Cast persisted planning evidence and the most recent Agent handoff.
      *
      * @return array<string, string>
      */
@@ -24,6 +33,7 @@ class WorkRequest extends Model
     {
         return [
             'evidence' => 'array',
+            'last_handoff' => 'array',
         ];
     }
 

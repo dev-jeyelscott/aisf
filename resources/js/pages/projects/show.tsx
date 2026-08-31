@@ -1,25 +1,14 @@
 import { Form, Head, Link } from '@inertiajs/react';
-import {
-    AlertCircle,
-    CheckCircle2,
-    GitBranch,
-    Pencil,
-    Users,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, GitBranch, Pencil, Users } from 'lucide-react';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
+import { retry as retryTask, run as runTask } from '@/routes/projects/tasks';
 import {
-    commit as commitTask,
-    resume as resumeTask,
-    start as startTask,
-} from '@/routes/projects/tasks';
-import {
-    confirmBrowserCheck,
-    store as startQaReview,
-} from '@/routes/projects/tasks/qa-reviews';
-import { store as storeWorkRequest } from '@/routes/projects/work-requests';
+    retry as retryWorkRequest,
+    store as storeWorkRequest,
+} from '@/routes/projects/work-requests';
 
 type Project = {
     id: number;
@@ -65,35 +54,10 @@ type AgentSession = {
     runs: AgentRun[];
 };
 
-type AcceptanceCriterionResult = {
-    criterion: string;
-    met: boolean;
-    note: string;
-};
-
-type VerificationResult = {
-    command: string;
-    passed: boolean;
-    notes: string;
-};
-
-type BrowserResult = {
-    mode: 'automated' | 'manual' | 'not_required';
-    passed: boolean | null;
-    notes: string;
-};
-
-type QaReview = {
-    id: number;
-    status: string;
-    summary: string;
-    acceptance_criteria_results: AcceptanceCriterionResult[];
-    verification_results: VerificationResult[];
-    browser_result: BrowserResult;
-    findings: string[];
-    operator_confirmed_at: string | null;
-    created_at: string | null;
-};
+type Handoff = {
+    to_role?: string | null;
+    note?: string | null;
+} | null;
 
 type Task = {
     id: number;
@@ -102,34 +66,26 @@ type Task = {
     title: string;
     objective: string;
     implementation_spec: string;
-    acceptance_criteria: string[];
-    verification_commands: string[];
-    browser_steps: string[];
-    status: string;
-    base_branch: string | null;
-    base_sha: string | null;
+    status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
     branch_name: string | null;
     worktree_path: string | null;
     blocked_reason: string | null;
-    approved_at: string | null;
+    last_handoff: Handoff;
     commit_sha: string | null;
-    commit_message: string | null;
     integrated_sha: string | null;
     integrated_at: string | null;
-    worktree_cleaned_at: string | null;
-    branch_deleted_at: string | null;
     changed_files: string[];
     agent_sessions: AgentSession[];
-    qa_reviews: QaReview[];
 };
 
 type WorkRequest = {
     id: number;
     prompt: string;
-    status: string;
+    status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
     summary: string | null;
     evidence: string[] | null;
     failure_reason: string | null;
+    last_handoff: Handoff;
     agent_sessions: AgentSession[];
     tasks: Task[];
 };
@@ -158,13 +114,17 @@ function formatTimestamp(value: string | null): string {
 /**
  * Return status styling while retaining visible text so status is never communicated by color alone.
  */
-function runStatusClass(status: string): string {
-    if (status === 'succeeded') {
+function statusClass(status: string): string {
+    if (status === 'completed') {
         return 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400';
     }
 
     if (status === 'failed') {
         return 'border-destructive/30 bg-destructive/10 text-destructive';
+    }
+
+    if (status === 'running') {
+        return 'border-amber-600/30 bg-amber-600/10 text-amber-700 dark:text-amber-400';
     }
 
     return 'border-border bg-muted text-muted-foreground';
@@ -222,12 +182,9 @@ function AgentSessionActivity({
                                             Run {run.attempt}
                                         </span>
                                         <span
-                                            className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${runStatusClass(run.status)}`}
+                                            className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${statusClass(run.status === 'succeeded' ? 'completed' : run.status)}`}
                                         >
                                             {humanize(run.status)}
-                                        </span>
-                                        <span className="border-border bg-muted rounded-full border px-2 py-0.5 text-xs capitalize">
-                                            {run.context_mode} context
                                         </span>
                                     </div>
                                     <span className="text-muted-foreground text-xs capitalize">
@@ -263,35 +220,10 @@ function AgentSessionActivity({
 
                                 <details className="border-border mt-3 rounded-md border">
                                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                                        Inspect context sources and submitted
-                                        input
+                                        Inspect submitted input
                                     </summary>
                                     <div className="border-border border-t p-3">
-                                        <h6 className="text-sm font-medium">
-                                            Context sources
-                                        </h6>
-                                        {run.context_sources.length > 0 ? (
-                                            <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
-                                                {run.context_sources.map(
-                                                    (source, index) => (
-                                                        <li
-                                                            key={`${run.id}-source-${index}`}
-                                                        >
-                                                            {source.label}
-                                                        </li>
-                                                    ),
-                                                )}
-                                            </ul>
-                                        ) : (
-                                            <p className="text-muted-foreground mt-2 text-sm">
-                                                No source metadata recorded.
-                                            </p>
-                                        )}
-
-                                        <h6 className="mt-4 text-sm font-medium">
-                                            Exact submitted input
-                                        </h6>
-                                        <pre className="bg-muted mt-2 max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
+                                        <pre className="bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
                                             {run.submitted_input}
                                         </pre>
                                     </div>
@@ -300,148 +232,6 @@ function AgentSessionActivity({
                         ))}
                     </div>
                 </div>
-            ))}
-        </div>
-    );
-}
-
-/**
- * Return status styling for a QA review outcome without communicating status by color alone.
- */
-function qaStatusClass(status: string): string {
-    if (status === 'approved') {
-        return 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400';
-    }
-
-    if (status === 'changes_required') {
-        return 'border-destructive/30 bg-destructive/10 text-destructive';
-    }
-
-    return 'border-amber-600/30 bg-amber-600/10 text-amber-700 dark:text-amber-400';
-}
-
-/**
- * Render QA review evidence, most recent first, including acceptance criteria, verification, browser, and findings.
- */
-function QaReviewEvidence({ reviews }: { reviews: QaReview[] }) {
-    return (
-        <div className="mt-3 space-y-3">
-            {reviews.map((review) => (
-                <article
-                    key={review.id}
-                    className="border-border bg-muted/20 rounded-lg border p-3"
-                >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span
-                            className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${qaStatusClass(review.status)}`}
-                        >
-                            {humanize(review.status)}
-                        </span>
-                        <span className="text-muted-foreground text-xs">
-                            {formatTimestamp(review.created_at)}
-                        </span>
-                    </div>
-
-                    <p className="text-muted-foreground mt-2 text-sm">
-                        {review.summary}
-                    </p>
-
-                    <div className="mt-3">
-                        <h6 className="text-xs font-medium">
-                            Acceptance criteria
-                        </h6>
-                        <ul className="mt-1 space-y-1">
-                            {review.acceptance_criteria_results.map(
-                                (result, index) => (
-                                    <li
-                                        key={`${review.id}-criterion-${index}`}
-                                        className="text-muted-foreground flex items-start gap-2 text-xs"
-                                    >
-                                        {result.met ? (
-                                            <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600" />
-                                        ) : (
-                                            <AlertCircle className="text-destructive mt-0.5 size-3.5 shrink-0" />
-                                        )}
-                                        <span>
-                                            {result.criterion}
-                                            {result.note ? ` — ${result.note}` : ''}
-                                        </span>
-                                    </li>
-                                ),
-                            )}
-                        </ul>
-                    </div>
-
-                    <div className="mt-3">
-                        <h6 className="text-xs font-medium">
-                            Verification results
-                        </h6>
-                        <ul className="mt-1 space-y-1">
-                            {review.verification_results.map(
-                                (result, index) => (
-                                    <li
-                                        key={`${review.id}-verification-${index}`}
-                                        className="text-muted-foreground text-xs"
-                                    >
-                                        <div className="flex items-start gap-2">
-                                            {result.passed ? (
-                                                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600" />
-                                            ) : (
-                                                <AlertCircle className="text-destructive mt-0.5 size-3.5 shrink-0" />
-                                            )}
-                                            <code className="bg-muted rounded px-1.5 py-0.5">
-                                                {result.command}
-                                            </code>
-                                        </div>
-                                        {result.notes && (
-                                            <p className="mt-1 pl-6">
-                                                {result.notes}
-                                            </p>
-                                        )}
-                                    </li>
-                                ),
-                            )}
-                        </ul>
-                    </div>
-
-                    <div className="mt-3">
-                        <h6 className="text-xs font-medium">
-                            Browser acceptance
-                        </h6>
-                        <p className="text-muted-foreground mt-1 text-xs">
-                            {review.browser_result.mode === 'not_required'
-                                ? 'No browser check was required for this Task.'
-                                : review.browser_result.mode === 'automated'
-                                  ? review.browser_result.passed
-                                      ? 'Automated browser check passed.'
-                                      : 'Automated browser check failed.'
-                                  : 'Automated browser tooling was unavailable — manual operator confirmation required.'}
-                            {review.browser_result.notes
-                                ? ` ${review.browser_result.notes}`
-                                : ''}
-                        </p>
-                        {review.operator_confirmed_at && (
-                            <p className="mt-1 text-xs text-green-700 dark:text-green-400">
-                                Operator confirmed the browser check at{' '}
-                                {formatTimestamp(review.operator_confirmed_at)}
-                                .
-                            </p>
-                        )}
-                    </div>
-
-                    {review.findings.length > 0 && (
-                        <div className="mt-3">
-                            <h6 className="text-xs font-medium">Findings</h6>
-                            <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5 text-xs">
-                                {review.findings.map((finding, index) => (
-                                    <li key={`${review.id}-finding-${index}`}>
-                                        {finding}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                </article>
             ))}
         </div>
     );
@@ -589,7 +379,9 @@ export default function ProjectWorkspace({
                     >
                         <div className="flex flex-wrap items-start justify-between gap-3">
                             <h2 className="font-medium">Work request</h2>
-                            <span className="border-border bg-muted rounded-full border px-2.5 py-1 text-xs font-medium capitalize">
+                            <span
+                                className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(request.status)}`}
+                            >
                                 {humanize(request.status)}
                             </span>
                         </div>
@@ -636,21 +428,39 @@ export default function ProjectWorkspace({
                             </div>
                         )}
 
-                        {request.failure_reason && (
+                        {request.status === 'failed' && (
                             <div className="border-destructive/30 bg-destructive/5 mt-4 rounded-md border p-3">
                                 <h3 className="text-destructive text-sm font-medium">
-                                    Planning failed
+                                    Work request failed
                                 </h3>
                                 <p className="text-muted-foreground mt-1 text-sm">
                                     {request.failure_reason}
                                 </p>
+                                <Form
+                                    {...retryWorkRequest.form([
+                                        project.id,
+                                        request.id,
+                                    ])}
+                                    className="mt-3"
+                                >
+                                    {({ processing }) => (
+                                        <Button
+                                            type="submit"
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={processing}
+                                        >
+                                            Retry
+                                        </Button>
+                                    )}
+                                </Form>
                             </div>
                         )}
 
                         {request.tasks.length > 0 && (
                             <div className="mt-5 space-y-4">
                                 <h3 className="text-sm font-medium">
-                                    Ordered task plan
+                                    Tasks
                                 </h3>
                                 {request.tasks.map((task) => {
                                     const dependency = task.depends_on_task_id
@@ -685,16 +495,21 @@ export default function ProjectWorkspace({
                                                             : {dependency.title}
                                                         </span>
                                                     )}
-                                                    <span className="border-border bg-muted rounded-full border px-2.5 py-1 text-xs font-medium capitalize">
+                                                    <span
+                                                        className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(task.status)}`}
+                                                    >
                                                         {humanize(task.status)}
                                                     </span>
-                                                    {task.status ===
-                                                        'queued' && (
+                                                    {(task.status ===
+                                                        'pending' ||
+                                                        task.status ===
+                                                            'waiting') && (
                                                         <Form
-                                                            {...startTask.form([
+                                                            {...runTask.form([
                                                                 project.id,
                                                                 task.id,
                                                             ])}
+                                                            className="flex items-center gap-2"
                                                         >
                                                             {({
                                                                 processing,
@@ -706,33 +521,7 @@ export default function ProjectWorkspace({
                                                                         processing
                                                                     }
                                                                 >
-                                                                    Start Task
-                                                                </Button>
-                                                            )}
-                                                        </Form>
-                                                    )}
-                                                    {task.status ===
-                                                        'ready_for_qa' && (
-                                                        <Form
-                                                            {...startQaReview.form(
-                                                                [
-                                                                    project.id,
-                                                                    task.id,
-                                                                ],
-                                                            )}
-                                                        >
-                                                            {({
-                                                                processing,
-                                                            }) => (
-                                                                <Button
-                                                                    type="submit"
-                                                                    size="sm"
-                                                                    disabled={
-                                                                        processing
-                                                                    }
-                                                                >
-                                                                    Start QA
-                                                                    review
+                                                                    Run now
                                                                 </Button>
                                                             )}
                                                         </Form>
@@ -740,33 +529,16 @@ export default function ProjectWorkspace({
                                                 </div>
                                             </div>
 
-                                            {task.blocked_reason && (
+                                            {task.status === 'failed' && (
                                                 <div className="border-destructive/30 bg-destructive/5 mt-4 rounded-md border p-3">
                                                     <h5 className="text-destructive text-sm font-medium">
-                                                        Task blocked
+                                                        Task failed
                                                     </h5>
                                                     <p className="text-muted-foreground mt-1 text-sm">
                                                         {task.blocked_reason}
                                                     </p>
-                                                </div>
-                                            )}
-
-                                            {task.status === 'approved' && (
-                                                <div className="mt-4 rounded-md border border-green-600/30 bg-green-600/10 p-3">
-                                                    <h5 className="text-sm font-medium text-green-700 dark:text-green-400">
-                                                        QA approved
-                                                    </h5>
-                                                    <p className="text-muted-foreground mt-1 text-sm">
-                                                        Approved at{' '}
-                                                        {formatTimestamp(
-                                                            task.approved_at,
-                                                        )}
-                                                        . Verification checks
-                                                        and browser acceptance
-                                                        are recorded below.
-                                                    </p>
                                                     <Form
-                                                        {...commitTask.form([
+                                                        {...retryTask.form([
                                                             project.id,
                                                             task.id,
                                                         ])}
@@ -776,65 +548,87 @@ export default function ProjectWorkspace({
                                                             <Button
                                                                 type="submit"
                                                                 size="sm"
+                                                                variant="outline"
                                                                 disabled={
                                                                     processing
                                                                 }
                                                             >
-                                                                Finalize approved
-                                                                commit
+                                                                Retry
                                                             </Button>
                                                         )}
                                                     </Form>
                                                 </div>
                                             )}
 
-                                            {(task.status === 'committing' ||
-                                                task.status ===
-                                                    'integrating') && (
-                                                <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-600/10 p-3">
-                                                    <h5 className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                                                        {task.status ===
-                                                        'committing'
-                                                            ? 'Coder is finalizing the approved commit'
-                                                            : 'Integrating approved commit'}
-                                                    </h5>
-                                                    <p className="text-muted-foreground mt-1 text-sm">
-                                                        The Task remains QA-gated;
-                                                        integration performs no
-                                                        additional AI review.
-                                                    </p>
-                                                </div>
-                                            )}
+                                            {task.status === 'waiting' &&
+                                                task.last_handoff?.note && (
+                                                    <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-600/10 p-3">
+                                                        <h5 className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                                            Agent handoff
+                                                            {task.last_handoff
+                                                                .to_role
+                                                                ? ` to ${humanize(task.last_handoff.to_role)}`
+                                                                : ''}
+                                                        </h5>
+                                                        <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
+                                                            {
+                                                                task
+                                                                    .last_handoff
+                                                                    .note
+                                                            }
+                                                        </p>
+                                                        <Form
+                                                            {...runTask.form([
+                                                                project.id,
+                                                                task.id,
+                                                            ])}
+                                                            className="mt-3 grid gap-2"
+                                                        >
+                                                            {({
+                                                                processing,
+                                                                errors,
+                                                            }) => (
+                                                                <>
+                                                                    <textarea
+                                                                        name="operator_instruction"
+                                                                        placeholder="Optional operator instruction for the next Agent turn…"
+                                                                        className="border-input bg-background min-h-16 rounded-md border p-2 text-sm"
+                                                                    />
+                                                                    <InputError
+                                                                        message={
+                                                                            errors.operator_instruction
+                                                                        }
+                                                                    />
+                                                                    <Button
+                                                                        type="submit"
+                                                                        size="sm"
+                                                                        disabled={
+                                                                            processing
+                                                                        }
+                                                                    >
+                                                                        Continue
+                                                                    </Button>
+                                                                </>
+                                                            )}
+                                                        </Form>
+                                                    </div>
+                                                )}
 
                                             {task.commit_sha && (
                                                 <div className="border-border bg-muted/20 mt-4 rounded-md border p-3">
                                                     <h5 className="text-sm font-medium">
-                                                        Approved commit
+                                                        Commit
                                                     </h5>
-                                                    <dl className="text-muted-foreground mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                                                        <div>
-                                                            <dt>Message</dt>
-                                                            <dd className="text-foreground mt-0.5 font-mono break-words">
-                                                                {
-                                                                    task.commit_message
-                                                                }
-                                                            </dd>
-                                                        </div>
-                                                        <div>
-                                                            <dt>SHA</dt>
-                                                            <dd className="text-foreground mt-0.5 font-mono break-all">
-                                                                {task.commit_sha}
-                                                            </dd>
-                                                        </div>
-                                                    </dl>
+                                                    <p className="text-foreground mt-1 font-mono text-xs break-all">
+                                                        {task.commit_sha}
+                                                    </p>
                                                     {task.integrated_sha && (
-                                                        <p className="text-muted-foreground mt-3 text-sm">
-                                                            Integrated successfully
-                                                            at{' '}
+                                                        <p className="text-muted-foreground mt-2 text-sm">
+                                                            Integrated at{' '}
                                                             {formatTimestamp(
                                                                 task.integrated_at,
                                                             )}
-                                                            . Project HEAD: {' '}
+                                                            . Project HEAD:{' '}
                                                             <code className="bg-muted rounded px-1.5 py-0.5 text-xs">
                                                                 {
                                                                     task.integrated_sha
@@ -842,116 +636,6 @@ export default function ProjectWorkspace({
                                                             </code>
                                                         </p>
                                                     )}
-                                                    {task.worktree_cleaned_at && (
-                                                        <p className="text-muted-foreground mt-2 text-sm">
-                                                            Task worktree cleaned
-                                                            up at{' '}
-                                                            {formatTimestamp(
-                                                                task.worktree_cleaned_at,
-                                                            )}
-                                                            {task.branch_deleted_at
-                                                                ? '; temporary Task branch deleted.'
-                                                                : '; temporary Task branch retained because it could not be safely deleted.'}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            )}
-
-                                            {task.status ===
-                                                'changes_required' && (
-                                                <div className="border-destructive/30 bg-destructive/5 mt-4 rounded-md border p-3">
-                                                    <h5 className="text-destructive text-sm font-medium">
-                                                        QA changes required
-                                                    </h5>
-                                                    <Form
-                                                        {...resumeTask.form([
-                                                            project.id,
-                                                            task.id,
-                                                        ])}
-                                                        className="mt-3 grid gap-2"
-                                                    >
-                                                        {({
-                                                            processing,
-                                                            errors,
-                                                        }) => (
-                                                            <>
-                                                                <textarea
-                                                                    name="operator_instruction"
-                                                                    placeholder="Optional new operator instruction for the Coder…"
-                                                                    className="border-input bg-background min-h-16 rounded-md border p-2 text-sm"
-                                                                />
-                                                                <InputError
-                                                                    message={
-                                                                        errors.operator_instruction
-                                                                    }
-                                                                />
-                                                                <Button
-                                                                    type="submit"
-                                                                    size="sm"
-                                                                    disabled={
-                                                                        processing
-                                                                    }
-                                                                >
-                                                                    Resume
-                                                                    Coder with
-                                                                    QA findings
-                                                                </Button>
-                                                            </>
-                                                        )}
-                                                    </Form>
-                                                </div>
-                                            )}
-
-                                            {task.status ===
-                                                'manual_browser_check_required' && (
-                                                <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-600/10 p-3">
-                                                    <h5 className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                                                        Manual browser check
-                                                        required
-                                                    </h5>
-                                                    <p className="text-muted-foreground mt-1 text-sm">
-                                                        No automated browser
-                                                        tooling was available.
-                                                        Follow the browser
-                                                        test steps below in
-                                                        your own browser, then
-                                                        confirm the result.
-                                                    </p>
-                                                    <Form
-                                                        {...confirmBrowserCheck.form(
-                                                            [
-                                                                project.id,
-                                                                task.id,
-                                                            ],
-                                                        )}
-                                                        className="mt-3"
-                                                    >
-                                                        {({ processing }) => (
-                                                            <Button
-                                                                type="submit"
-                                                                size="sm"
-                                                                disabled={
-                                                                    processing
-                                                                }
-                                                            >
-                                                                Confirm browser
-                                                                check passed
-                                                            </Button>
-                                                        )}
-                                                    </Form>
-                                                </div>
-                                            )}
-
-                                            {task.qa_reviews.length > 0 && (
-                                                <div className="mt-4">
-                                                    <h5 className="text-sm font-medium">
-                                                        QA review evidence
-                                                    </h5>
-                                                    <QaReviewEvidence
-                                                        reviews={
-                                                            task.qa_reviews
-                                                        }
-                                                    />
                                                 </div>
                                             )}
 
@@ -960,19 +644,13 @@ export default function ProjectWorkspace({
                                                     <h5 className="text-sm font-medium">
                                                         Task worktree
                                                     </h5>
-                                                    <dl className="text-muted-foreground mt-2 grid gap-2 text-xs sm:grid-cols-3">
+                                                    <dl className="text-muted-foreground mt-2 grid gap-2 text-xs sm:grid-cols-2">
                                                         <div>
                                                             <dt>Branch</dt>
                                                             <dd className="text-foreground mt-0.5 font-mono">
                                                                 {
                                                                     task.branch_name
                                                                 }
-                                                            </dd>
-                                                        </div>
-                                                        <div>
-                                                            <dt>Base SHA</dt>
-                                                            <dd className="text-foreground mt-0.5 font-mono break-all">
-                                                                {task.base_sha}
                                                             </dd>
                                                         </div>
                                                         <div>
@@ -1020,78 +698,19 @@ export default function ProjectWorkspace({
                                                     </p>
                                                 </div>
 
-                                                <div>
-                                                    <h5 className="font-medium">
-                                                        Implementation
-                                                        specification
-                                                    </h5>
-                                                    <p className="text-muted-foreground mt-1 whitespace-pre-wrap">
-                                                        {
-                                                            task.implementation_spec
-                                                        }
-                                                    </p>
-                                                </div>
-
-                                                <div>
-                                                    <h5 className="font-medium">
-                                                        Acceptance criteria
-                                                    </h5>
-                                                    <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5">
-                                                        {task.acceptance_criteria.map(
-                                                            (
-                                                                criterion,
-                                                                index,
-                                                            ) => (
-                                                                <li
-                                                                    key={`${task.id}-acceptance-${index}`}
-                                                                >
-                                                                    {criterion}
-                                                                </li>
-                                                            ),
-                                                        )}
-                                                    </ul>
-                                                </div>
-
-                                                <div>
-                                                    <h5 className="font-medium">
-                                                        Verification commands
-                                                    </h5>
-                                                    <ul className="mt-1 space-y-2">
-                                                        {task.verification_commands.map(
-                                                            (
-                                                                command,
-                                                                index,
-                                                            ) => (
-                                                                <li
-                                                                    key={`${task.id}-command-${index}`}
-                                                                >
-                                                                    <code className="bg-muted block overflow-x-auto rounded px-2 py-1.5 text-xs">
-                                                                        {
-                                                                            command
-                                                                        }
-                                                                    </code>
-                                                                </li>
-                                                            ),
-                                                        )}
-                                                    </ul>
-                                                </div>
-
-                                                <div>
-                                                    <h5 className="font-medium">
-                                                        Browser test steps
-                                                    </h5>
-                                                    <ol className="text-muted-foreground mt-1 list-decimal space-y-1 pl-5">
-                                                        {task.browser_steps.map(
-                                                            (step, index) => (
-                                                                <li
-                                                                    key={`${task.id}-browser-${index}`}
-                                                                >
-                                                                    {step}
-                                                                </li>
-                                                            ),
-                                                        )}
-                                                    </ol>
-                                                </div>
+                                                {task.implementation_spec && (
+                                                    <div>
+                                                        <h5 className="font-medium">
+                                                            Implementation
+                                                            notes
+                                                        </h5>
+                                                        <p className="text-muted-foreground mt-1 whitespace-pre-wrap">
+                                                            {
+                                                                task.implementation_spec
+                                                            }
+                                                        </p>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className="border-border mt-5 border-t pt-4">
