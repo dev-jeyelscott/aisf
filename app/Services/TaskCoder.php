@@ -23,9 +23,12 @@ class TaskCoder
     /**
      * Execute the enabled Coder Agent inside the Task worktree and return a strictly validated completion summary.
      *
+     * When the Coder's logical session already has a succeeded run, this resumes that same session with only the
+     * latest unresolved QA findings and any new operator instruction instead of replaying the original context.
+     *
      * @return array{summary: string, verification_performed: list<string>}
      */
-    public function run(Task $task): array
+    public function run(Task $task, ?string $operatorInstruction = null): array
     {
         $task->loadMissing('workRequest.project');
 
@@ -49,19 +52,58 @@ class TaskCoder
         }
 
         $session = $this->sessionManager->forSubject($agent, $task);
-        $context = $this->contextAssembler->coderInitial($task, $agent);
-        $run = $this->sessionManager->startRun($session, 'coder_implementation', $context);
+        $isFixLoop = $session->runs()->where('status', 'succeeded')->exists();
+
+        if ($isFixLoop) {
+            $latestFindings = $task->qaReviews()
+                ->where('status', 'changes_required')
+                ->latest('id')
+                ->first();
+
+            if ($latestFindings === null) {
+                throw new UnexpectedValueException(
+                    'The Task requires the latest QA changes-required findings before the Coder fix loop can run.',
+                );
+            }
+
+            $unresolvedCriteria = collect($latestFindings->acceptance_criteria_results)
+                ->where('met', false)
+                ->pluck('criterion')
+                ->values()
+                ->all();
+
+            $context = $this->contextAssembler->coderFixDelta(
+                $latestFindings->findings,
+                $unresolvedCriteria,
+                $operatorInstruction,
+            );
+            $purpose = 'coder_fix';
+        } else {
+            $context = $this->contextAssembler->coderInitial($task, $agent);
+            $purpose = 'coder_implementation';
+        }
+
+        $run = $this->sessionManager->startRun($session, $purpose, $context);
         $schema = $this->completionSchema();
         $result = null;
 
         try {
-            $result = $this->harness->start(
-                $agent,
-                (string) $task->worktree_path,
-                $context['input'],
-                $schema,
-                writable: true,
-            );
+            $result = $session->provider_session_id !== null
+                ? $this->harness->resume(
+                    $agent,
+                    (string) $task->worktree_path,
+                    (string) $session->provider_session_id,
+                    $context['input'],
+                    $schema,
+                    writable: true,
+                )
+                : $this->harness->start(
+                    $agent,
+                    (string) $task->worktree_path,
+                    $context['input'],
+                    $schema,
+                    writable: true,
+                );
 
             $this->sessionManager->captureProviderSessionId(
                 $session,

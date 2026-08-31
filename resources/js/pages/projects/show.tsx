@@ -10,7 +10,14 @@ import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
-import { start as startTask } from '@/routes/projects/tasks';
+import {
+    resume as resumeTask,
+    start as startTask,
+} from '@/routes/projects/tasks';
+import {
+    confirmBrowserCheck,
+    store as startQaReview,
+} from '@/routes/projects/tasks/qa-reviews';
 import { store as storeWorkRequest } from '@/routes/projects/work-requests';
 
 type Project = {
@@ -57,6 +64,36 @@ type AgentSession = {
     runs: AgentRun[];
 };
 
+type AcceptanceCriterionResult = {
+    criterion: string;
+    met: boolean;
+    note: string;
+};
+
+type VerificationResult = {
+    command: string;
+    passed: boolean;
+    notes: string;
+};
+
+type BrowserResult = {
+    mode: 'automated' | 'manual';
+    passed: boolean | null;
+    notes: string;
+};
+
+type QaReview = {
+    id: number;
+    status: string;
+    summary: string;
+    acceptance_criteria_results: AcceptanceCriterionResult[];
+    verification_results: VerificationResult[];
+    browser_result: BrowserResult;
+    findings: string[];
+    operator_confirmed_at: string | null;
+    created_at: string | null;
+};
+
 type Task = {
     id: number;
     depends_on_task_id: number | null;
@@ -73,8 +110,10 @@ type Task = {
     branch_name: string | null;
     worktree_path: string | null;
     blocked_reason: string | null;
+    approved_at: string | null;
     changed_files: string[];
     agent_sessions: AgentSession[];
+    qa_reviews: QaReview[];
 };
 
 type WorkRequest = {
@@ -254,6 +293,146 @@ function AgentSessionActivity({
                         ))}
                     </div>
                 </div>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * Return status styling for a QA review outcome without communicating status by color alone.
+ */
+function qaStatusClass(status: string): string {
+    if (status === 'approved') {
+        return 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400';
+    }
+
+    if (status === 'changes_required') {
+        return 'border-destructive/30 bg-destructive/10 text-destructive';
+    }
+
+    return 'border-amber-600/30 bg-amber-600/10 text-amber-700 dark:text-amber-400';
+}
+
+/**
+ * Render QA review evidence, most recent first, including acceptance criteria, verification, browser, and findings.
+ */
+function QaReviewEvidence({ reviews }: { reviews: QaReview[] }) {
+    return (
+        <div className="mt-3 space-y-3">
+            {reviews.map((review) => (
+                <article
+                    key={review.id}
+                    className="border-border bg-muted/20 rounded-lg border p-3"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span
+                            className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${qaStatusClass(review.status)}`}
+                        >
+                            {humanize(review.status)}
+                        </span>
+                        <span className="text-muted-foreground text-xs">
+                            {formatTimestamp(review.created_at)}
+                        </span>
+                    </div>
+
+                    <p className="text-muted-foreground mt-2 text-sm">
+                        {review.summary}
+                    </p>
+
+                    <div className="mt-3">
+                        <h6 className="text-xs font-medium">
+                            Acceptance criteria
+                        </h6>
+                        <ul className="mt-1 space-y-1">
+                            {review.acceptance_criteria_results.map(
+                                (result, index) => (
+                                    <li
+                                        key={`${review.id}-criterion-${index}`}
+                                        className="text-muted-foreground flex items-start gap-2 text-xs"
+                                    >
+                                        {result.met ? (
+                                            <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600" />
+                                        ) : (
+                                            <AlertCircle className="text-destructive mt-0.5 size-3.5 shrink-0" />
+                                        )}
+                                        <span>
+                                            {result.criterion}
+                                            {result.note ? ` — ${result.note}` : ''}
+                                        </span>
+                                    </li>
+                                ),
+                            )}
+                        </ul>
+                    </div>
+
+                    <div className="mt-3">
+                        <h6 className="text-xs font-medium">
+                            Verification results
+                        </h6>
+                        <ul className="mt-1 space-y-1">
+                            {review.verification_results.map(
+                                (result, index) => (
+                                    <li
+                                        key={`${review.id}-verification-${index}`}
+                                        className="text-muted-foreground text-xs"
+                                    >
+                                        <div className="flex items-start gap-2">
+                                            {result.passed ? (
+                                                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600" />
+                                            ) : (
+                                                <AlertCircle className="text-destructive mt-0.5 size-3.5 shrink-0" />
+                                            )}
+                                            <code className="bg-muted rounded px-1.5 py-0.5">
+                                                {result.command}
+                                            </code>
+                                        </div>
+                                        {result.notes && (
+                                            <p className="mt-1 pl-6">
+                                                {result.notes}
+                                            </p>
+                                        )}
+                                    </li>
+                                ),
+                            )}
+                        </ul>
+                    </div>
+
+                    <div className="mt-3">
+                        <h6 className="text-xs font-medium">
+                            Browser acceptance
+                        </h6>
+                        <p className="text-muted-foreground mt-1 text-xs">
+                            {review.browser_result.mode === 'automated'
+                                ? review.browser_result.passed
+                                    ? 'Automated browser check passed.'
+                                    : 'Automated browser check failed.'
+                                : 'Automated browser tooling was unavailable — manual operator confirmation required.'}
+                            {review.browser_result.notes
+                                ? ` ${review.browser_result.notes}`
+                                : ''}
+                        </p>
+                        {review.operator_confirmed_at && (
+                            <p className="mt-1 text-xs text-green-700 dark:text-green-400">
+                                Operator confirmed the browser check at{' '}
+                                {formatTimestamp(review.operator_confirmed_at)}
+                                .
+                            </p>
+                        )}
+                    </div>
+
+                    {review.findings.length > 0 && (
+                        <div className="mt-3">
+                            <h6 className="text-xs font-medium">Findings</h6>
+                            <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5 text-xs">
+                                {review.findings.map((finding, index) => (
+                                    <li key={`${review.id}-finding-${index}`}>
+                                        {finding}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </article>
             ))}
         </div>
     );
@@ -523,6 +702,32 @@ export default function ProjectWorkspace({
                                                             )}
                                                         </Form>
                                                     )}
+                                                    {task.status ===
+                                                        'ready_for_qa' && (
+                                                        <Form
+                                                            {...startQaReview.form(
+                                                                [
+                                                                    project.id,
+                                                                    task.id,
+                                                                ],
+                                                            )}
+                                                        >
+                                                            {({
+                                                                processing,
+                                                            }) => (
+                                                                <Button
+                                                                    type="submit"
+                                                                    size="sm"
+                                                                    disabled={
+                                                                        processing
+                                                                    }
+                                                                >
+                                                                    Start QA
+                                                                    review
+                                                                </Button>
+                                                            )}
+                                                        </Form>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -534,6 +739,121 @@ export default function ProjectWorkspace({
                                                     <p className="text-muted-foreground mt-1 text-sm">
                                                         {task.blocked_reason}
                                                     </p>
+                                                </div>
+                                            )}
+
+                                            {task.status === 'approved' && (
+                                                <div className="mt-4 rounded-md border border-green-600/30 bg-green-600/10 p-3">
+                                                    <h5 className="text-sm font-medium text-green-700 dark:text-green-400">
+                                                        QA approved
+                                                    </h5>
+                                                    <p className="text-muted-foreground mt-1 text-sm">
+                                                        Approved at{' '}
+                                                        {formatTimestamp(
+                                                            task.approved_at,
+                                                        )}
+                                                        . Verification checks
+                                                        and browser acceptance
+                                                        are recorded below.
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {task.status ===
+                                                'changes_required' && (
+                                                <div className="border-destructive/30 bg-destructive/5 mt-4 rounded-md border p-3">
+                                                    <h5 className="text-destructive text-sm font-medium">
+                                                        QA changes required
+                                                    </h5>
+                                                    <Form
+                                                        {...resumeTask.form([
+                                                            project.id,
+                                                            task.id,
+                                                        ])}
+                                                        className="mt-3 grid gap-2"
+                                                    >
+                                                        {({
+                                                            processing,
+                                                            errors,
+                                                        }) => (
+                                                            <>
+                                                                <textarea
+                                                                    name="operator_instruction"
+                                                                    placeholder="Optional new operator instruction for the Coder…"
+                                                                    className="border-input bg-background min-h-16 rounded-md border p-2 text-sm"
+                                                                />
+                                                                <InputError
+                                                                    message={
+                                                                        errors.operator_instruction
+                                                                    }
+                                                                />
+                                                                <Button
+                                                                    type="submit"
+                                                                    size="sm"
+                                                                    disabled={
+                                                                        processing
+                                                                    }
+                                                                >
+                                                                    Resume
+                                                                    Coder with
+                                                                    QA findings
+                                                                </Button>
+                                                            </>
+                                                        )}
+                                                    </Form>
+                                                </div>
+                                            )}
+
+                                            {task.status ===
+                                                'manual_browser_check_required' && (
+                                                <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-600/10 p-3">
+                                                    <h5 className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                                        Manual browser check
+                                                        required
+                                                    </h5>
+                                                    <p className="text-muted-foreground mt-1 text-sm">
+                                                        No automated browser
+                                                        tooling was available.
+                                                        Follow the browser
+                                                        test steps below in
+                                                        your own browser, then
+                                                        confirm the result.
+                                                    </p>
+                                                    <Form
+                                                        {...confirmBrowserCheck.form(
+                                                            [
+                                                                project.id,
+                                                                task.id,
+                                                            ],
+                                                        )}
+                                                        className="mt-3"
+                                                    >
+                                                        {({ processing }) => (
+                                                            <Button
+                                                                type="submit"
+                                                                size="sm"
+                                                                disabled={
+                                                                    processing
+                                                                }
+                                                            >
+                                                                Confirm browser
+                                                                check passed
+                                                            </Button>
+                                                        )}
+                                                    </Form>
+                                                </div>
+                                            )}
+
+                                            {task.qa_reviews.length > 0 && (
+                                                <div className="mt-4">
+                                                    <h5 className="text-sm font-medium">
+                                                        QA review evidence
+                                                    </h5>
+                                                    <QaReviewEvidence
+                                                        reviews={
+                                                            task.qa_reviews
+                                                        }
+                                                    />
                                                 </div>
                                             )}
 

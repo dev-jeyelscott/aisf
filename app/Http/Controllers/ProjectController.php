@@ -7,6 +7,7 @@ use App\Http\Requests\UpdateProjectRequest;
 use App\Models\AgentRun;
 use App\Models\AgentSession;
 use App\Models\Project;
+use App\Models\QaReview;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\ProjectAgentProvisioner;
@@ -68,6 +69,7 @@ class ProjectController extends Controller
                 'agentSessions.runs',
                 'tasks.agentSessions.projectAgent',
                 'tasks.agentSessions.runs',
+                'tasks.qaReviews',
             ])
             ->orderBy('id')
             ->get()
@@ -183,6 +185,7 @@ class ProjectController extends Controller
                 'worktree_path',
                 'blocked_reason',
             ]),
+            'approved_at' => $task->approved_at?->toIso8601String(),
             'changed_files' => filled($task->worktree_path)
                 ? $worktreeManager->changedFiles($task)
                 : [],
@@ -195,6 +198,33 @@ class ProjectController extends Controller
                 )
                 ->values()
                 ->all(),
+            'qa_reviews' => $task->qaReviews
+                ->sortByDesc('id')
+                ->map(
+                    fn (QaReview $review): array => $this->qaReviewPayload($review),
+                )
+                ->values()
+                ->all(),
+        ];
+    }
+
+    /**
+     * Serialize one QA review with its structured evidence and operator confirmation state.
+     *
+     * @return array<string, mixed>
+     */
+    private function qaReviewPayload(QaReview $review): array
+    {
+        return [
+            'id' => $review->id,
+            'status' => $review->status,
+            'summary' => $review->summary,
+            'acceptance_criteria_results' => $review->acceptance_criteria_results,
+            'verification_results' => $review->verification_results,
+            'browser_result' => $review->browser_result,
+            'findings' => $review->findings,
+            'operator_confirmed_at' => $review->operator_confirmed_at?->toIso8601String(),
+            'created_at' => $review->created_at?->toIso8601String(),
         ];
     }
 

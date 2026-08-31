@@ -37,9 +37,9 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
     public int $uniqueFor = 300;
 
     /**
-     * Create a new queued Task Coder implementation job.
+     * Create a new queued Task Coder implementation job, optionally carrying a new operator instruction for the fix loop.
      */
-    public function __construct(public Task $task) {}
+    public function __construct(public Task $task, public ?string $operatorInstruction = null) {}
 
     /**
      * Keep at most one active Coder Task execution per Project.
@@ -59,7 +59,7 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
         $taskId = (int) $this->task->getKey();
         $task = Task::query()->findOrFail($taskId);
 
-        if (in_array($task->status, ['ready_for_qa', 'blocked'], true)) {
+        if (! in_array($task->status, ['queued', 'changes_required'], true)) {
             return;
         }
 
@@ -70,7 +70,7 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
 
         try {
             $worktreeManager->ensureWorktree($task);
-            $coder->run($task);
+            $coder->run($task, $this->operatorInstruction);
 
             if (! $worktreeManager->headMatchesBase($task)) {
                 $this->markBlocked(
@@ -104,13 +104,19 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * Persist a concise terminal block reason only while the Task has not already reached QA.
+     * Persist a concise terminal block reason only while the Task has not already progressed past this Coder run.
      */
     private function markBlocked(int $taskId, string $message): void
     {
         Task::query()
             ->whereKey($taskId)
-            ->where('status', '!=', 'ready_for_qa')
+            ->whereNotIn('status', [
+                'ready_for_qa',
+                'qa_reviewing',
+                'changes_required',
+                'manual_browser_check_required',
+                'approved',
+            ])
             ->update([
                 'status' => 'blocked',
                 'blocked_reason' => Str::limit($message, 10000, ''),
