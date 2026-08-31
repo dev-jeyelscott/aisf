@@ -3,6 +3,10 @@ includes:
     - vendor/nesbot/carbon/extension.neon
 
 parameters:
+    bootstrapFiles:
+        - vendor/larastan/larastan/bootstrap.php
+    parallel:
+        maximumNumberOfProcesses: 1
     paths:
         - app/
         - bootstrap/app.php

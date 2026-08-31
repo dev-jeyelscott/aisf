@@ -19,7 +19,7 @@ class WorkRequestController extends Controller
     }
 
     /**
-     * Re-enter a failed WorkRequest as pending so the dispatcher retries Project Manager planning.
+     * Re-enter a failed WorkRequest as pending so the dispatcher starts a fresh Foreman turn.
      */
     public function retry(Project $project, WorkRequest $workRequest): RedirectResponse
     {

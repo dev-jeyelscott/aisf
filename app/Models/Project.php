@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['title', 'description', 'path', 'enabled'])]
+#[Fillable(['title', 'description', 'path', 'enabled', 'merge_policy'])]
 class Project extends Model
 {
     /** @use HasFactory<ProjectFactory> */

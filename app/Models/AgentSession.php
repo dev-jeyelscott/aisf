@@ -33,7 +33,7 @@ class AgentSession extends Model
     }
 
     /**
-     * Return the Task subject when this is a Coder or QA session.
+     * Return the Task subject when this Agent session works on a Task.
      *
      * @return BelongsTo<Task, $this>
      */
@@ -43,7 +43,7 @@ class AgentSession extends Model
     }
 
     /**
-     * Return the WorkRequest subject when this is a Project Manager session.
+     * Return the WorkRequest subject when this Agent session works on a WorkRequest.
      *
      * @return BelongsTo<WorkRequest, $this>
      */

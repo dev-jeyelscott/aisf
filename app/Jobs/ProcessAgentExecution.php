@@ -2,9 +2,11 @@
 
 namespace App\Jobs;
 
+use App\Models\AgentRun;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentExecutionRunner;
+use App\Services\CandidateAcceptanceGate;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -76,7 +78,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null}  $completion
+     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
     private function applyCompletion(Task|WorkRequest $subject, array $completion, AgentExecutionRunner $runner): void
     {
@@ -109,12 +111,12 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null}  $completion
+     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
     private function completeWorkRequest(WorkRequest $workRequest, array $completion): void
     {
         DB::transaction(function () use ($workRequest, $completion): void {
-            $locked = WorkRequest::query()->lockForUpdate()->findOrFail($workRequest->getKey());
+            $locked = WorkRequest::query()->lockForUpdate()->whereKey($workRequest->getKey())->firstOrFail();
 
             if ($locked->status !== 'running') {
                 return;
@@ -133,14 +135,17 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
                 }
 
                 $locked->tasks()->create([
+                    'assigned_project_agent_id' => filled($taskPlan['assigned_agent_role'] ?? null)
+                        ? $locked->project->agents()->where('role', $taskPlan['assigned_agent_role'])->value('id')
+                        : null,
                     'depends_on_task_id' => $dependsOnTaskId,
                     'position' => $position,
                     'title' => (string) $taskPlan['title'],
                     'objective' => (string) ($taskPlan['objective'] ?? $taskPlan['title']),
                     'implementation_spec' => (string) ($taskPlan['implementation_spec'] ?? ''),
-                    'acceptance_criteria' => [],
-                    'verification_commands' => [],
-                    'browser_steps' => [],
+                    'acceptance_criteria' => $taskPlan['acceptance_criteria'] ?? [],
+                    'verification_commands' => $taskPlan['verification_commands'] ?? [],
+                    'browser_steps' => $taskPlan['browser_steps'] ?? [],
                 ]);
             }
 
@@ -155,10 +160,65 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null}  $completion
+     * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
     private function completeTask(Task $task, array $completion, AgentExecutionRunner $runner): void
     {
+        if (is_array($completion['review'] ?? null)) {
+            $review = $completion['review'];
+            $candidateRunId = $task->last_handoff['candidate_agent_run_id'] ?? null;
+            $candidateRun = AgentRun::query()->find($candidateRunId);
+            $reviewerRun = AgentRun::query()->find($completion['agent_run_id']);
+
+            if (! $candidateRun instanceof AgentRun || ! $reviewerRun instanceof AgentRun) {
+                throw new \UnexpectedValueException('AISF could not locate the candidate and reviewer execution evidence.');
+            }
+
+            app(CandidateAcceptanceGate::class)->recordReview(
+                $task,
+                $candidateRun,
+                $reviewerRun,
+                $review['candidate_sha'],
+                $review['status'],
+                $review['summary'],
+                $review['findings'],
+            );
+
+            if ($review['status'] === 'changes_requested') {
+                $task->update([
+                    'status' => 'waiting',
+                    'last_handoff' => ['to_role' => 'foreman', 'note' => $review['summary'], 'findings' => $review['findings']],
+                ]);
+
+                return;
+            }
+
+            $task->loadMissing('workRequest.project');
+            if ($task->workRequest->project->merge_policy === 'automatic') {
+                try {
+                    if (! app(CandidateAcceptanceGate::class)->hasCurrentApproval($task)) {
+                        throw new \UnexpectedValueException('Automatic merge requires current independent approval.');
+                    }
+
+                    $runner->mergeVerifiedCandidate($task);
+                } catch (Throwable $exception) {
+                    $task->update([
+                        'status' => 'waiting',
+                        'last_handoff' => [
+                            'to_role' => 'foreman',
+                            'note' => 'AISF merge gate rejected the candidate: '.$exception->getMessage(),
+                        ],
+                    ]);
+
+                    return;
+                }
+            }
+
+            $task->update(['status' => 'completed', 'last_handoff' => null]);
+
+            return;
+        }
+
         if (filled($completion['commit_sha'])) {
             $result = $runner->integrateReportedCommit($task, $completion['commit_sha'], $completion['summary']);
 
@@ -169,7 +229,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
                         'status' => 'waiting',
                         'blocked_reason' => null,
                         'last_handoff' => [
-                            'to_role' => 'coder',
+                            'to_role' => 'foreman',
                             'note' => "CI checks failed before a pull request could be opened:\n\n".Str::limit($result['ci_output'], 4000, ''),
                         ],
                     ]);
@@ -180,8 +240,9 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
             Task::query()->whereKey($task->getKey())
                 ->where('status', 'running')
                 ->update([
-                    'status' => 'completed',
-                    'last_handoff' => null,
+                    'status' => 'waiting',
+                    'candidate_sha' => $result['commit_sha'],
+                    'last_handoff' => ['to_role' => 'foreman', 'candidate_agent_run_id' => $completion['agent_run_id'], 'note' => 'Coordinate an independent review for this exact candidate SHA.'],
                     'blocked_reason' => null,
                     'commit_sha' => $result['commit_sha'],
                     'pull_request_url' => $result['pull_request_url'],
@@ -202,8 +263,8 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     private function freshSubject(): Task|WorkRequest
     {
         return $this->subject instanceof WorkRequest
-            ? WorkRequest::query()->findOrFail($this->subject->getKey())
-            : Task::query()->findOrFail($this->subject->getKey());
+            ? WorkRequest::query()->whereKey($this->subject->getKey())->sole()
+            : Task::query()->whereKey($this->subject->getKey())->sole();
     }
 
     private function projectId(): int

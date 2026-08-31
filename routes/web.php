@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AgentInstructionDefaultController;
 use App\Http\Controllers\ProjectAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectSkillController;
@@ -8,6 +9,8 @@ use App\Http\Controllers\WorkRequestController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
+Route::get('agent-defaults', [AgentInstructionDefaultController::class, 'index'])->name('agent-defaults.index');
+Route::put('agent-defaults', [AgentInstructionDefaultController::class, 'update'])->name('agent-defaults.update');
 
 Route::resource('projects', ProjectController::class)->except('destroy');
 Route::resource('projects.agents', ProjectAgentController::class)->only(['index', 'edit', 'update']);

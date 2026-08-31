@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/** @property array<string, mixed>|null $last_handoff */
 #[Fillable(['prompt', 'status', 'summary', 'evidence', 'failure_reason', 'last_handoff'])]
 class WorkRequest extends Model
 {
@@ -58,7 +59,7 @@ class WorkRequest extends Model
     }
 
     /**
-     * Return the Project Manager logical session associated with this WorkRequest.
+     * Return logical Agent sessions associated with this WorkRequest.
      *
      * @return HasMany<AgentSession, $this>
      */

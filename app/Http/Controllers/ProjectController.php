@@ -68,6 +68,7 @@ class ProjectController extends Controller
                 'agentSessions.runs',
                 'tasks.agentSessions.projectAgent',
                 'tasks.agentSessions.runs',
+                'tasks.candidateReviews',
             ])
             ->orderBy('id')
             ->get()
@@ -86,6 +87,7 @@ class ProjectController extends Controller
                 'description',
                 'path',
                 'enabled',
+                'merge_policy',
             ]),
             'repositoryStatus' => $project->enabled
                 ? $repositoryInspector->status($project->path)
@@ -106,6 +108,7 @@ class ProjectController extends Controller
                 'description',
                 'path',
                 'enabled',
+                'merge_policy',
             ]),
         ]);
     }
@@ -180,6 +183,7 @@ class ProjectController extends Controller
                 'blocked_reason',
                 'last_handoff',
                 'commit_sha',
+                'candidate_sha',
                 'pull_request_url',
             ]),
             'changed_files' => filled($task->worktree_path)
@@ -192,6 +196,10 @@ class ProjectController extends Controller
                         $session,
                     ),
                 )
+                ->values()
+                ->all(),
+            'candidate_reviews' => $task->candidateReviews
+                ->map(fn ($review): array => $review->only(['candidate_sha', 'status', 'summary', 'findings', 'created_at']))
                 ->values()
                 ->all(),
         ];

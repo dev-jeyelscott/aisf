@@ -1,5 +1,11 @@
 import { Form, Head, Link } from '@inertiajs/react';
-import { AlertCircle, CheckCircle2, GitBranch, Pencil, Users } from 'lucide-react';
+import {
+    AlertCircle,
+    CheckCircle2,
+    GitBranch,
+    Pencil,
+    Users,
+} from 'lucide-react';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
@@ -66,7 +72,13 @@ type Task = {
     title: string;
     objective: string;
     implementation_spec: string;
-    status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+    status:
+        | 'pending'
+        | 'running'
+        | 'waiting'
+        | 'completed'
+        | 'failed'
+        | 'cancelled';
     branch_name: string | null;
     worktree_path: string | null;
     blocked_reason: string | null;
@@ -80,7 +92,13 @@ type Task = {
 type WorkRequest = {
     id: number;
     prompt: string;
-    status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+    status:
+        | 'pending'
+        | 'running'
+        | 'waiting'
+        | 'completed'
+        | 'failed'
+        | 'cancelled';
     summary: string | null;
     evidence: string[] | null;
     failure_reason: string | null;
@@ -458,9 +476,7 @@ export default function ProjectWorkspace({
 
                         {request.tasks.length > 0 && (
                             <div className="mt-5 space-y-4">
-                                <h3 className="text-sm font-medium">
-                                    Tasks
-                                </h3>
+                                <h3 className="text-sm font-medium">Tasks</h3>
                                 {request.tasks.map((task) => {
                                     const dependency = task.depends_on_task_id
                                         ? request.tasks.find(
@@ -701,8 +717,7 @@ export default function ProjectWorkspace({
                                                 {task.implementation_spec && (
                                                     <div>
                                                         <h5 className="font-medium">
-                                                            Implementation
-                                                            notes
+                                                            Implementation notes
                                                         </h5>
                                                         <p className="text-muted-foreground mt-1 whitespace-pre-wrap">
                                                             {

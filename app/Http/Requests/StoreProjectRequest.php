@@ -16,6 +16,7 @@ class StoreProjectRequest extends FormRequest
     {
         $this->merge([
             'path' => app(RepositoryInspector::class)->normalizePath((string) $this->input('path')),
+            'merge_policy' => $this->input('merge_policy', 'human'),
         ]);
     }
 
@@ -39,6 +40,7 @@ class StoreProjectRequest extends FormRequest
             'description' => ['nullable', 'string'],
             'path' => ['required', 'string', 'max:2048'],
             'enabled' => ['required', 'boolean'],
+            'merge_policy' => ['required', 'string', 'in:human,automatic'],
         ];
     }
 

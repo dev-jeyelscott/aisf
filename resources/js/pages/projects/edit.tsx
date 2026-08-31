@@ -9,6 +9,7 @@ type Project = {
     description: string | null;
     path: string;
     enabled: boolean;
+    merge_policy: 'human' | 'automatic';
 };
 
 export default function EditProject({ project }: { project: Project }) {

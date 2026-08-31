@@ -13,8 +13,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property list<string> $acceptance_criteria
  * @property list<string> $verification_commands
  * @property list<string> $browser_steps
+ * @property array<string, mixed>|null $last_handoff
  */
-#[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'last_handoff', 'commit_sha', 'pull_request_url'])]
+#[Fillable(['assigned_project_agent_id', 'depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'last_handoff', 'commit_sha', 'candidate_sha', 'pull_request_url'])]
 class Task extends Model
 {
     /** @use HasFactory<TaskFactory> */
@@ -65,12 +66,28 @@ class Task extends Model
     }
 
     /**
-     * Return Coder and QA logical sessions associated with this Task.
+     * Return the persistent specialist selected by the Foreman for this Task.
+     *
+     * @return BelongsTo<ProjectAgent, $this>
+     */
+    public function assignedProjectAgent(): BelongsTo
+    {
+        return $this->belongsTo(ProjectAgent::class, 'assigned_project_agent_id');
+    }
+
+    /**
+     * Return logical Agent sessions associated with this Task.
      *
      * @return HasMany<AgentSession, $this>
      */
     public function agentSessions(): HasMany
     {
         return $this->hasMany(AgentSession::class);
+    }
+
+    /** @return HasMany<CandidateReview, $this> */
+    public function candidateReviews(): HasMany
+    {
+        return $this->hasMany(CandidateReview::class);
     }
 }

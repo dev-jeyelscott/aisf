@@ -25,17 +25,15 @@ class AgentExecutionRunner
     /** @var array<int, string> */
     private const STATUSES = ['completed', 'waiting', 'failed'];
 
-    /** @var array<int, string> */
-    private const TASK_ROLES = ['coder', 'quality_assurance_specialist'];
-
     public function __construct(
         private readonly AgentHarness $harness,
         private readonly AgentSessionManager $sessionManager,
         private readonly TaskWorktreeManager $worktreeManager,
+        private readonly AgentPromptComposer $promptComposer,
     ) {}
 
     /**
-     * @return array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null}
+     * @return array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}
      */
     public function run(Task|WorkRequest $subject, ?string $operatorInstruction = null): array
     {
@@ -46,6 +44,13 @@ class AgentExecutionRunner
             ->where('enabled', true)
             ->first();
 
+        if (! $agent instanceof ProjectAgent && $role === 'foreman') {
+            $agent = $project->agents()
+                ->where('role', 'project_manager')
+                ->where('enabled', true)
+                ->first();
+        }
+
         if (! $agent instanceof ProjectAgent) {
             throw new UnexpectedValueException(sprintf(
                 'No enabled %s Agent is configured for this Project.',
@@ -55,16 +60,16 @@ class AgentExecutionRunner
 
         $session = $this->sessionManager->forSubject($agent, $subject);
         [$repositoryPath, $writable] = $this->executionTarget($subject);
-        $prompt = $this->buildPrompt($subject, $agent, $role, $repositoryPath, $operatorInstruction);
+        $promptContext = $this->promptComposer->compose($agent, $subject, $repositoryPath, $operatorInstruction);
+        $prompt = $promptContext['prompt']."\n\n".$this->contractSection($subject, $role);
 
         $run = $this->sessionManager->startRun($session, $role, [
             'mode' => 'initial',
             'input' => $prompt,
-            'sources' => [
-                ['type' => 'agent_identity', 'label' => ucfirst(str_replace('_', ' ', $role)).' identity'],
-                ['type' => 'agent_workflow', 'label' => 'Agent workflow instructions'],
-                ['type' => 'subject', 'label' => $subject instanceof WorkRequest ? 'WorkRequest' : 'Task'],
-            ],
+            'sources' => $promptContext['sources'],
+            'agent_snapshot' => $promptContext['snapshot']['agent'],
+            'prompt_snapshot' => $promptContext['snapshot'],
+            'role' => $role,
         ]);
 
         try {
@@ -93,9 +98,17 @@ class AgentExecutionRunner
             throw $exception;
         }
 
-        $this->sessionManager->completeRun($run, $completion['summary'], $result->exitCode);
+        $this->sessionManager->completeRun($run, $completion['summary'], $result->exitCode, executionMetadata: [
+            'completion' => $completion,
+            'harness' => $agent->harness,
+            'model' => $agent->model,
+        ]);
 
-        return $completion;
+        foreach ($completion['delegations'] as $delegation) {
+            $this->sessionManager->recordDelegation($run, $delegation);
+        }
+
+        return [...$completion, 'agent_run_id' => $run->id];
     }
 
     /**
@@ -111,6 +124,7 @@ class AgentExecutionRunner
         }
 
         $verifiedSha = $this->worktreeManager->verifyCommitExists($task, $commitSha);
+        $this->worktreeManager->verifyHeadMatches($task, $verifiedSha);
         $ci = $this->worktreeManager->runCiCheck($task);
 
         if (! $ci['passed']) {
@@ -120,6 +134,11 @@ class AgentExecutionRunner
         $pullRequest = $this->worktreeManager->pushAndOpenPullRequest($task, $verifiedSha, $task->title, $summary);
 
         return ['integrated' => true, ...$pullRequest];
+    }
+
+    public function mergeVerifiedCandidate(Task $task): void
+    {
+        $this->worktreeManager->mergePullRequest($task, (string) $task->candidate_sha);
     }
 
     /**
@@ -132,7 +151,7 @@ class AgentExecutionRunner
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['status', 'summary', 'handoff', 'commit_sha', 'tasks', 'already_implemented'],
+            'required' => ['status', 'summary', 'handoff', 'commit_sha', 'tasks', 'already_implemented', 'delegations', 'review'],
             'properties' => [
                 'status' => ['type' => 'string', 'enum' => self::STATUSES],
                 'summary' => ['type' => 'string'],
@@ -141,7 +160,7 @@ class AgentExecutionRunner
                     'additionalProperties' => false,
                     'required' => ['to_role', 'note'],
                     'properties' => [
-                        'to_role' => ['type' => ['string', 'null'], 'enum' => [...self::TASK_ROLES, null]],
+                        'to_role' => ['type' => ['string', 'null']],
                         'note' => ['type' => ['string', 'null']],
                     ],
                 ],
@@ -151,22 +170,51 @@ class AgentExecutionRunner
                     'items' => [
                         'type' => 'object',
                         'additionalProperties' => false,
-                        'required' => ['title', 'objective', 'implementation_spec', 'depends_on_position'],
+                        'required' => ['title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'depends_on_position', 'assigned_agent_role'],
                         'properties' => [
                             'title' => ['type' => 'string'],
                             'objective' => ['type' => ['string', 'null']],
                             'implementation_spec' => ['type' => ['string', 'null']],
+                            'acceptance_criteria' => ['type' => 'array', 'items' => ['type' => 'string']],
+                            'verification_commands' => ['type' => 'array', 'items' => ['type' => 'string']],
+                            'browser_steps' => ['type' => 'array', 'items' => ['type' => 'string']],
                             'depends_on_position' => ['type' => ['integer', 'null']],
+                            'assigned_agent_role' => ['type' => ['string', 'null']],
                         ],
                     ],
                 ],
                 'already_implemented' => ['type' => ['boolean', 'null']],
+                'delegations' => [
+                    'type' => ['array', 'null'],
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['purpose', 'role', 'status', 'evidence'],
+                        'properties' => [
+                            'purpose' => ['type' => 'string'],
+                            'role' => ['type' => 'string'],
+                            'status' => ['type' => 'string'],
+                            'evidence' => ['type' => ['string', 'null']],
+                        ],
+                    ],
+                ],
+                'review' => [
+                    'type' => ['object', 'null'],
+                    'additionalProperties' => false,
+                    'required' => ['candidate_sha', 'status', 'summary', 'findings'],
+                    'properties' => [
+                        'candidate_sha' => ['type' => 'string'],
+                        'status' => ['type' => 'string', 'enum' => ['approved', 'changes_requested']],
+                        'summary' => ['type' => 'string'],
+                        'findings' => ['type' => 'array', 'items' => ['type' => 'string']],
+                    ],
+                ],
             ],
         ];
     }
 
     /**
-     * @return array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null}
+     * @return array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null}
      */
     private function parseCompletion(string $output, Task|WorkRequest $subject): array
     {
@@ -184,15 +232,32 @@ class AgentExecutionRunner
             'status' => ['required', 'string', 'in:'.implode(',', self::STATUSES)],
             'summary' => ['required', 'string'],
             'handoff' => ['nullable', 'array'],
-            'handoff.to_role' => ['nullable', 'string', 'in:'.implode(',', self::TASK_ROLES)],
+            'handoff.to_role' => ['nullable', 'string', 'max:100'],
             'handoff.note' => ['nullable', 'string'],
             'commit_sha' => ['nullable', 'string'],
             'tasks' => ['nullable', 'array'],
             'tasks.*.title' => ['required_with:tasks', 'string'],
             'tasks.*.objective' => ['nullable', 'string'],
             'tasks.*.implementation_spec' => ['nullable', 'string'],
+            'tasks.*.acceptance_criteria' => ['nullable', 'array'],
+            'tasks.*.acceptance_criteria.*' => ['string'],
+            'tasks.*.verification_commands' => ['nullable', 'array'],
+            'tasks.*.verification_commands.*' => ['string'],
+            'tasks.*.browser_steps' => ['nullable', 'array'],
+            'tasks.*.browser_steps.*' => ['string'],
             'tasks.*.depends_on_position' => ['nullable', 'integer', 'min:1'],
+            'tasks.*.assigned_agent_role' => ['nullable', 'string', 'max:100'],
             'already_implemented' => ['nullable', 'boolean'],
+            'delegations' => ['nullable', 'array'],
+            'delegations.*.purpose' => ['required_with:delegations', 'string'],
+            'delegations.*.role' => ['required_with:delegations', 'string'],
+            'delegations.*.status' => ['required_with:delegations', 'string'],
+            'delegations.*.evidence' => ['nullable', 'string'],
+            'review' => ['nullable', 'array'],
+            'review.candidate_sha' => ['required_with:review', 'string'],
+            'review.status' => ['required_with:review', 'string', 'in:approved,changes_requested'],
+            'review.summary' => ['required_with:review', 'string'],
+            'review.findings' => ['required_with:review', 'array'],
         ]);
 
         if ($validator->fails()) {
@@ -214,22 +279,23 @@ class AgentExecutionRunner
             'commit_sha' => filled($decoded['commit_sha'] ?? null) ? trim((string) $decoded['commit_sha']) : null,
             'tasks' => $subject instanceof WorkRequest ? ($decoded['tasks'] ?? null) : null,
             'already_implemented' => $subject instanceof WorkRequest ? ($decoded['already_implemented'] ?? null) : null,
+            'delegations' => array_values(is_array($decoded['delegations'] ?? null) ? $decoded['delegations'] : []),
+            'review' => is_array($decoded['review'] ?? null) ? $decoded['review'] : null,
         ];
     }
 
     /**
-     * Determine which Agent role should run next: the Project Manager for a WorkRequest, or the role the
-     * last Task execution handed off to (defaulting to the Coder for a fresh Task).
+     * Determine the configured Agent role for a subject, defaulting to the Foreman.
      */
     private function roleFor(Task|WorkRequest $subject): string
     {
         if ($subject instanceof WorkRequest) {
-            return 'project_manager';
+            return 'foreman';
         }
 
-        $toRole = $subject->last_handoff['to_role'] ?? null;
+        $toRole = $subject->assignedProjectAgent->role ?? ($subject->last_handoff['to_role'] ?? null);
 
-        return in_array($toRole, self::TASK_ROLES, true) ? $toRole : 'coder';
+        return filled($toRole) ? $toRole : 'foreman';
     }
 
     private function projectFor(Task|WorkRequest $subject): Project
@@ -262,55 +328,6 @@ class AgentExecutionRunner
         return [(string) $subject->worktree_path, true];
     }
 
-    private function buildPrompt(
-        Task|WorkRequest $subject,
-        ProjectAgent $agent,
-        string $role,
-        string $repositoryPath,
-        ?string $operatorInstruction,
-    ): string {
-        $identity = filled($agent->identity) ? $agent->identity : "Act as the {$agent->name} for this software project.";
-        $defaultContext = filled($agent->default_context) ? $agent->default_context : 'No additional default context configured.';
-        $workflow = filled($agent->workflow_instructions) ? $agent->workflow_instructions : 'No additional workflow instructions configured.';
-        $skills = $agent->skills()->where('project_skills.enabled', true)->get();
-        $skillContext = $skills->isEmpty()
-            ? 'No enabled Skills are assigned.'
-            : $skills->map(fn ($skill, $index) => sprintf(
-                "Skill %d: %s\n%s",
-                $index + 1,
-                $skill->name,
-                $skill->instructions,
-            ))->implode("\n\n");
-
-        $sections = [
-            $identity,
-            "DEFAULT CONTEXT\n{$defaultContext}",
-            "WORKFLOW INSTRUCTIONS\n{$workflow}",
-            "ENABLED SKILLS\n{$skillContext}",
-            "REPOSITORY PATH\n{$repositoryPath}",
-        ];
-
-        if ($subject instanceof WorkRequest) {
-            $sections[] = "WORK REQUEST\n{$subject->prompt}";
-        } else {
-            $sections[] = "TASK\nTitle: {$subject->title}\nObjective: {$subject->objective}\nImplementation notes: ".(filled($subject->implementation_spec) ? $subject->implementation_spec : 'None provided.');
-
-            $note = $subject->last_handoff['note'] ?? null;
-
-            if (filled($note)) {
-                $sections[] = "PREVIOUS AGENT HANDOFF\n{$note}";
-            }
-        }
-
-        if (filled($operatorInstruction)) {
-            $sections[] = "OPERATOR INSTRUCTION\n{$operatorInstruction}";
-        }
-
-        $sections[] = $this->contractSection($subject, $role);
-
-        return implode("\n\n", $sections);
-    }
-
     private function contractSection(Task|WorkRequest $subject, string $role): string
     {
         if ($subject instanceof WorkRequest) {
@@ -323,17 +340,13 @@ Decide for yourself what fields each Task needs — a documentation-only Task ne
 PROMPT;
         }
 
-        $ciInstruction = $role === 'coder'
-            ? 'Before handing off to Quality Assurance or setting "commit_sha", run `composer ci:check` yourself and confirm it passes — do not hand off or report a commit while it is failing.'
-            : 'Before approving (handing off with "to_role": null or completing) or reporting a commit, run `composer ci:check` yourself and confirm it passes — hand back to the Coder with the failure details in "handoff.note" if it is failing.';
-
-        return <<<PROMPT
+        return <<<'PROMPT'
 RESPONSE CONTRACT
 You have write access to this isolated Task worktree only. Inspect, edit, run commands, test, and commit as you judge appropriate — there is no fixed process you must follow.
 Return only one JSON object matching the supplied schema.
 Set "status" to "completed" once you consider the assigned work fully done (or judge no further action is needed), "waiting" if you are handing off to another role for another turn, or "failed" if you cannot complete the work.
-If you are handing off, set "handoff" to {"to_role": "coder"|"quality_assurance_specialist", "note": "..."} describing what the next turn should do. If you committed, set "commit_sha" to the exact commit SHA you created; otherwise leave it null. Only commit when you judge the work is ready to be committed — there is no fixed timing requirement.
-{$ciInstruction} Laravel independently re-runs `composer ci:check` before opening any pull request and will hand the Task back to the Coder with the output if it fails, regardless of what you reported.
+If you are handing off, set "handoff" to {"to_role": "...", "note": "..."} describing what the next turn should do. If you committed, set "commit_sha" to the exact commit SHA you created; otherwise leave it null. A different Agent must review a candidate SHA before AISF may automatically merge it; return its structured review in "review".
+Run `composer ci:check` before reporting a commit. AISF independently verifies CI, exact SHA, PR state, independent approval, and merge authorization; it will give the Foreman fresh recovery context if a gate rejects the candidate.
 PROMPT;
     }
 }

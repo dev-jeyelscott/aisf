@@ -28,15 +28,9 @@ class AgentSessionManager
         }
 
         if ($subject instanceof WorkRequest) {
-            if ($agent->role !== 'project_manager') {
-                throw new UnexpectedValueException(
-                    'Only the Project Manager Agent may own a WorkRequest session.',
-                );
-            }
-
             if ((int) $agent->project_id !== (int) $subject->project_id) {
                 throw new UnexpectedValueException(
-                    'The Project Manager and WorkRequest must belong to the same Project.',
+                    'The Agent and WorkRequest must belong to the same Project.',
                 );
             }
 
@@ -45,18 +39,6 @@ class AgentSessionManager
                 'task_id' => null,
                 'work_request_id' => $subject->getKey(),
             ]);
-        }
-
-        if (
-            ! in_array(
-                $agent->role,
-                ['coder', 'quality_assurance_specialist'],
-                true,
-            )
-        ) {
-            throw new UnexpectedValueException(
-                'Only Coder or Quality Assurance Specialist Agents may own a Task session.',
-            );
         }
 
         $subject->loadMissing('workRequest');
@@ -86,6 +68,7 @@ class AgentSessionManager
         AgentSession $session,
         string $purpose,
         array $context,
+        ?AgentRun $parent = null,
     ): AgentRun {
         $purpose = trim($purpose);
 
@@ -98,6 +81,9 @@ class AgentSessionManager
         $mode = $context['mode'] ?? null;
         $input = $context['input'] ?? null;
         $sources = $context['sources'] ?? null;
+        $agentSnapshot = $context['agent_snapshot'] ?? null;
+        $promptSnapshot = $context['prompt_snapshot'] ?? null;
+        $role = $context['role'] ?? null;
 
         if (
             ! is_string($mode)
@@ -105,6 +91,8 @@ class AgentSessionManager
             || ! is_string($input)
             || trim($input) === ''
             || ! is_array($sources)
+            || ! is_array($agentSnapshot)
+            || ! is_array($promptSnapshot)
         ) {
             throw new UnexpectedValueException(
                 'Agent run context must contain a valid mode, submitted input, and context sources.',
@@ -120,6 +108,10 @@ class AgentSessionManager
                 $mode,
                 $input,
                 $sources,
+                $agentSnapshot,
+                $promptSnapshot,
+                $role,
+                $parent,
             ): AgentRun {
                 $lockedSession = AgentSession::query()
                     ->lockForUpdate()
@@ -131,11 +123,15 @@ class AgentSessionManager
 
                 return $lockedSession->runs()->create([
                     'purpose' => $purpose,
+                    'role' => $role,
                     'status' => 'running',
                     'attempt' => $attempt,
+                    'parent_agent_run_id' => $parent?->getKey(),
                     'context_mode' => $mode,
                     'submitted_input' => $input,
                     'context_sources' => array_values($sources),
+                    'agent_snapshot' => $agentSnapshot,
+                    'prompt_snapshot' => $promptSnapshot,
                     'output_summary' => null,
                     'raw_output_reference' => null,
                     'exit_code' => null,
@@ -199,12 +195,15 @@ class AgentSessionManager
 
     /**
      * Mark one running invocation successful with a concise durable summary.
+     *
+     * @param  array<string, mixed>  $executionMetadata
      */
     public function completeRun(
         AgentRun $run,
         string $summary,
         ?int $exitCode = null,
         ?string $rawOutputReference = null,
+        array $executionMetadata = [],
     ): void {
         $summary = trim($summary);
 
@@ -219,11 +218,47 @@ class AgentSessionManager
                 'status' => 'succeeded',
                 'output_summary' => Str::limit($summary, 2000, ''),
                 'raw_output_reference' => $rawOutputReference,
+                'execution_metadata' => $executionMetadata,
                 'exit_code' => $exitCode,
                 'finished_at' => now(),
             ]);
 
         $run->refresh();
+    }
+
+    /**
+     * Persist an ephemeral subagent reported by a parent execution without treating provider state as durable.
+     *
+     * @param  array<string, mixed>  $delegation
+     */
+    public function recordDelegation(AgentRun $parent, array $delegation): AgentRun
+    {
+        $purpose = trim((string) ($delegation['purpose'] ?? 'Delegated engineering work'));
+        $status = in_array($delegation['status'] ?? null, ['succeeded', 'failed', 'running'], true)
+            ? $delegation['status']
+            : 'succeeded';
+
+        $attempt = ((int) $parent->agentSession->runs()->max('attempt')) + 1;
+
+        return $parent->agentSession->runs()->create([
+            'parent_agent_run_id' => $parent->id,
+            'purpose' => $purpose,
+            'role' => $delegation['role'] ?? 'ephemeral_subagent',
+            'status' => $status,
+            'attempt' => $attempt,
+            'context_mode' => 'initial',
+            'submitted_input' => (string) ($delegation['instructions'] ?? $purpose),
+            'context_sources' => [['type' => 'parent_agent_run', 'label' => 'Parent Foreman execution']],
+            'agent_snapshot' => ['kind' => 'ephemeral', 'harness' => $delegation['harness'] ?? null, 'model' => $delegation['model'] ?? null],
+            'prompt_snapshot' => ['purpose' => $purpose, 'instructions' => $delegation['instructions'] ?? null],
+            'output_summary' => $delegation['evidence'] ?? null,
+            'raw_output_reference' => null,
+            'execution_metadata' => ['delegation' => $delegation],
+            'artifacts' => $delegation['artifacts'] ?? [],
+            'exit_code' => null,
+            'started_at' => now(),
+            'finished_at' => $status === 'running' ? null : now(),
+        ]);
     }
 
     /**
@@ -256,7 +291,7 @@ class AgentSessionManager
     }
 
     /**
-     * Produce a concise high-level summary for future non-structured Coder or QA results without retaining their transcript as context.
+     * Produce a concise high-level summary without retaining a provider transcript as context.
      */
     public function summarizeOutput(string $output): string
     {

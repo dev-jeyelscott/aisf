@@ -6,6 +6,7 @@ use App\Models\Task;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use JsonException;
 use RuntimeException;
 use Throwable;
 use UnexpectedValueException;
@@ -45,13 +46,20 @@ class TaskWorktreeManager
 
         $headSha = trim($headResult->output());
         $branchName = sprintf('aisf/task-%d', $task->id);
-        $worktreePath = storage_path("app/worktrees/task-{$task->id}");
+        $worktreePath = rtrim((string) config('aisf.worktree_base_path'), '/')."/task-{$task->id}";
 
         File::ensureDirectoryExists(dirname($worktreePath));
 
         if (is_dir($worktreePath)) {
             File::deleteDirectory($worktreePath);
         }
+
+        // Clear stale worktree admin entries and a leftover branch from an earlier attempt whose
+        // directory was removed without going through `git worktree remove` (e.g. a prior failure,
+        // or this same cleanup above) — otherwise `worktree add -b` fails even though nothing is
+        // actually using the directory or branch any more.
+        $this->run($repositoryPath, ['git', 'worktree', 'prune']);
+        $this->run($repositoryPath, ['git', 'branch', '-D', $branchName]);
 
         $result = $this->run($repositoryPath, [
             'git', 'worktree', 'add', '-b', $branchName, $worktreePath, $headSha,
@@ -146,6 +154,51 @@ class TaskWorktreeManager
                 ? trim($result->output()."\n".$result->errorOutput())
                 : 'Unable to run the Project CI check script.',
         ];
+    }
+
+    public function verifyHeadMatches(Task $task, string $expectedSha): void
+    {
+        $headSha = $this->requiredOutput((string) $task->worktree_path, ['git', 'rev-parse', 'HEAD'], 'Unable to resolve the Task worktree HEAD.');
+
+        if ($headSha !== $expectedSha) {
+            throw new UnexpectedValueException('The Task worktree HEAD no longer matches the candidate SHA.');
+        }
+    }
+
+    public function mergePullRequest(Task $task, string $expectedSha): void
+    {
+        $this->verifyHeadMatches($task, $expectedSha);
+        $task->loadMissing('workRequest.project');
+
+        if (! $task->workRequest->project->enabled) {
+            throw new UnexpectedValueException('Automatic merge requires an enabled Project authorization.');
+        }
+
+        $url = (string) $task->pull_request_url;
+
+        if ($url === '') {
+            throw new UnexpectedValueException('A pull request is required before automatic merge.');
+        }
+
+        $view = $this->run((string) $task->worktree_path, ['gh', 'pr', 'view', $url, '--json', 'headRefOid,state,isDraft']);
+
+        try {
+            $pullRequest = $view !== null && $view->successful()
+                ? json_decode($view->output(), true, flags: JSON_THROW_ON_ERROR)
+                : null;
+        } catch (JsonException) {
+            $pullRequest = null;
+        }
+
+        if (! is_array($pullRequest) || ($pullRequest['headRefOid'] ?? null) !== $expectedSha || ($pullRequest['state'] ?? null) !== 'OPEN' || ($pullRequest['isDraft'] ?? false) === true) {
+            throw new UnexpectedValueException('The pull request is not open at the expected candidate SHA.');
+        }
+
+        $result = $this->run((string) $task->worktree_path, ['gh', 'pr', 'merge', $url, '--merge', '--delete-branch']);
+
+        if ($result === null || $result->failed()) {
+            throw new UnexpectedValueException('AISF could not automatically merge the verified pull request.');
+        }
     }
 
     /**

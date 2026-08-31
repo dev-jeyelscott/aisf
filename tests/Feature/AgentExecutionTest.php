@@ -112,7 +112,7 @@ test('PM already-implemented completion marks the WorkRequest completed without 
         ->and($workRequest->tasks()->count())->toBe(0);
 });
 
-test('a trivial documentation Task completes directly from the Coder with no QA handoff and no commit', function () {
+test('a trivial documentation Task completes directly without review or a commit', function () {
     [, , $task] = feature09TaskFixture();
     feature09FakeHarness(feature09Completion([
         'status' => 'completed',
@@ -124,6 +124,30 @@ test('a trivial documentation Task completes directly from the Coder with no QA 
     expect($task->refresh()->status)->toBe('completed')
         ->and($task->last_handoff)->toBeNull()
         ->and($task->commit_sha)->toBeNull();
+});
+
+test('ensureWorktree recovers from a stale branch and worktree left by a previous failed attempt', function () {
+    [$project, , $task] = feature09TaskFixture();
+    $repositoryPath = $project->path;
+    $branchName = "aisf/task-{$task->id}";
+    $worktreePath = rtrim((string) config('aisf.worktree_base_path'), '/')."/task-{$task->id}";
+
+    if (is_dir($worktreePath)) {
+        File::deleteDirectory($worktreePath);
+    }
+
+    // Simulate a prior attempt that created the branch and worktree, then had its directory
+    // removed without going through `git worktree remove` (leaving the branch and the worktree's
+    // admin metadata behind) — exactly what made a retry fail with "Unable to create the isolated
+    // Task Git worktree." even though nothing was actually still using that branch or directory.
+    Process::path($repositoryPath)->run(['git', 'worktree', 'add', '-b', $branchName, $worktreePath, 'HEAD'])->throw();
+    File::deleteDirectory($worktreePath);
+
+    app(TaskWorktreeManager::class)->ensureWorktree($task);
+    $task->refresh();
+
+    expect($task->worktree_path)->toBe($worktreePath)
+        ->and(is_dir($worktreePath))->toBeTrue();
 });
 
 test('a Coder completion with a reported commit SHA is verified, pushed, and opened as a pull request', function () {
@@ -157,8 +181,10 @@ test('a Coder completion with a reported commit SHA is verified, pushed, and ope
 
     $task->refresh();
 
-    expect($task->status)->toBe('completed')
+    expect($task->status)->toBe('waiting')
         ->and($task->commit_sha)->toBe($commitSha)
+        ->and($task->candidate_sha)->toBe($commitSha)
+        ->and($task->last_handoff['to_role'])->toBe('foreman')
         ->and($task->pull_request_url)->toBe('https://github.com/example/aisf/pull/42');
 });
 
@@ -195,7 +221,7 @@ test('a pull request is reused when one already exists for the Task branch', fun
     expect($task->refresh()->pull_request_url)->toBe('https://github.com/example/aisf/pull/7');
 });
 
-test('a failing CI check hands the Task back to the Coder instead of opening a pull request', function () {
+test('a failing CI check starts a fresh Foreman recovery turn instead of opening a pull request', function () {
     [, , $task] = feature09TaskFixture();
 
     app(TaskWorktreeManager::class)->ensureWorktree($task);
@@ -225,18 +251,18 @@ test('a failing CI check hands the Task back to the Coder instead of opening a p
     $task->refresh();
 
     expect($task->status)->toBe('waiting')
-        ->and($task->last_handoff['to_role'])->toBe('coder')
+        ->and($task->last_handoff['to_role'])->toBe('foreman')
         ->and($task->last_handoff['note'])->toContain('Pint found 3 style violations.')
         ->and($task->commit_sha)->toBeNull()
         ->and($task->pull_request_url)->toBeNull();
 });
 
-test('a Coder hand-off to QA moves the Task to waiting and the next execution invokes the QA Agent', function () {
+test('a specialist hand-off routes the next execution to the assigned reviewer', function () {
     [, , $task] = feature09TaskFixture();
     feature09FakeHarness(feature09Completion([
         'status' => 'waiting',
         'summary' => 'Implementation complete, ready for review.',
-        'handoff' => ['to_role' => 'quality_assurance_specialist', 'note' => 'Please review the changes.'],
+        'handoff' => ['to_role' => 'independent_reviewer', 'note' => 'Please review the changes.'],
     ]));
 
     app()->call([new ProcessAgentExecution($task), 'handle']);
@@ -244,7 +270,7 @@ test('a Coder hand-off to QA moves the Task to waiting and the next execution in
     $task->refresh();
 
     expect($task->status)->toBe('waiting')
-        ->and($task->last_handoff['to_role'])->toBe('quality_assurance_specialist');
+        ->and($task->last_handoff['to_role'])->toBe('independent_reviewer');
 
     $qaHarness = feature09FakeHarness(feature09Completion([
         'status' => 'completed',
@@ -257,30 +283,30 @@ test('a Coder hand-off to QA moves the Task to waiting and the next execution in
         ->and($qaHarness->prompt)->toContain('Please review the changes.');
 
     $qaSession = $task->agentSessions()
-        ->whereHas('projectAgent', fn ($query) => $query->where('role', 'quality_assurance_specialist'))
+        ->whereHas('projectAgent', fn ($query) => $query->where('role', 'independent_reviewer'))
         ->sole();
     expect($qaSession)->not->toBeNull();
 });
 
-test('a QA changes-requested loop hands back to the Coder and completes after a fix', function () {
+test('a review changes-requested loop returns to an implementation specialist and completes after a fix', function () {
     [, , $task] = feature09TaskFixture();
 
     feature09FakeHarness(feature09Completion([
         'status' => 'waiting',
         'summary' => 'Ready for review.',
-        'handoff' => ['to_role' => 'quality_assurance_specialist'],
+        'handoff' => ['to_role' => 'independent_reviewer'],
     ]));
     app()->call([new ProcessAgentExecution($task), 'handle']);
 
     feature09FakeHarness(feature09Completion([
         'status' => 'waiting',
         'summary' => 'Found an issue.',
-        'handoff' => ['to_role' => 'coder', 'note' => 'The heading is missing.'],
+        'handoff' => ['to_role' => 'implementation_specialist', 'note' => 'The heading is missing.'],
     ]));
     app()->call([new ProcessAgentExecution($task), 'handle']);
 
     expect($task->refresh()->status)->toBe('waiting')
-        ->and($task->last_handoff['to_role'])->toBe('coder');
+        ->and($task->last_handoff['to_role'])->toBe('implementation_specialist');
 
     $coderHarness = feature09FakeHarness(feature09Completion([
         'status' => 'completed',
@@ -309,7 +335,7 @@ test('an Agent execution failure retries then marks the Task failed with an oper
 
 test('an operator Retry re-enters a failed Task as pending', function () {
     [$project, , $task] = feature09TaskFixture();
-    $task->update(['status' => 'failed', 'blocked_reason' => 'Coder implementation failed.', 'last_handoff' => ['to_role' => 'coder']]);
+    $task->update(['status' => 'failed', 'blocked_reason' => 'Implementation failed.', 'last_handoff' => ['to_role' => 'implementation_specialist']]);
 
     $response = $this->post(route('projects.tasks.retry', [$project, $task]));
 
@@ -323,7 +349,7 @@ test('an operator Retry re-enters a failed Task as pending', function () {
 test('an operator Retry re-enters a failed WorkRequest as pending', function () {
     Queue::fake();
     [$project, $workRequest] = feature09Fixture();
-    $workRequest->update(['status' => 'failed', 'failure_reason' => 'Project Manager planning failed.']);
+    $workRequest->update(['status' => 'failed', 'failure_reason' => 'Foreman execution failed.']);
 
     $response = $this->post(route('projects.work-requests.retry', [$project, $workRequest]));
 

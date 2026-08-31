@@ -57,13 +57,13 @@
         ],
         "format": [
             "npm run check:fix",
-            "pint --parallel"
+            "pint"
         ],
         "lint": [
-            "pint --parallel"
+            "pint"
         ],
         "lint:check": [
-            "pint --parallel --test"
+            "pint --test"
         ],
         "ci:check": [
             "Composer\\Config::disableProcessTimeout",
@@ -72,7 +72,7 @@
             "@test"
         ],
         "types:check": [
-            "phpstan analyse"
+            "phpstan analyse --debug"
         ],
         "test": [
             "@php artisan config:clear --ansi",

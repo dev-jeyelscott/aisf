@@ -12,6 +12,7 @@ type Project = {
     description: string | null;
     path: string;
     enabled: boolean;
+    merge_policy: 'human' | 'automatic';
 };
 
 export function ProjectForm({
@@ -87,6 +88,28 @@ export function ProjectForm({
                                 validation.
                             </p>
                         </div>
+                    </div>
+
+                    <div className="grid gap-2">
+                        <Label htmlFor="merge_policy">Merge policy</Label>
+                        <select
+                            id="merge_policy"
+                            name="merge_policy"
+                            defaultValue={project?.merge_policy ?? 'human'}
+                            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+                        >
+                            <option value="human">
+                                Human approval required
+                            </option>
+                            <option value="automatic">
+                                Automatic after AISF gates
+                            </option>
+                        </select>
+                        <p className="text-muted-foreground text-sm">
+                            Automatic merge requires AISF CI and an independent
+                            review of the exact candidate commit.
+                        </p>
+                        <InputError message={errors.merge_policy} />
                     </div>
 
                     <Button
