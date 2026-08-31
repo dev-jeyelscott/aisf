@@ -229,7 +229,7 @@ class ProjectController extends Controller
             'context_sources' => $run->context_sources ?? [],
             'output_summary' => $run->output_summary,
             'exit_code' => $run->exit_code,
-            'started_at' => $run->started_at?->toIso8601String(),
+            'started_at' => $run->started_at->toIso8601String(),
             'finished_at' => $run->finished_at?->toIso8601String(),
         ];
     }

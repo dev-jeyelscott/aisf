@@ -303,7 +303,7 @@ class ProjectManagerPlanner
             'summary' => ['required', 'string'],
             'already_implemented' => ['required', 'boolean'],
             'already_implemented_reason' => ['nullable', 'string'],
-            'tasks' => ['required', 'array'],
+            'tasks' => ['present', 'array'],
             'tasks.*' => ['required', 'array'],
             'tasks.*.title' => ['required', 'string', 'max:255'],
             'tasks.*.objective' => ['required', 'string'],

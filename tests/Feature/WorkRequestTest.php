@@ -83,6 +83,7 @@ class Feature03FakeAgentHarness extends AgentHarness
         );
     }
 }
+
 test('a work request is persisted as submitted and planning is queued', function () {
     Queue::fake();
     $project = Project::factory()->create();
@@ -125,7 +126,7 @@ test('the PM prompt contains configured identity context workflow skills project
         $firstSkill->id => ['position' => 2],
         $disabledSkill->id => ['position' => 3],
     ]);
-    $harness = feature03FakeHarness($this, feature03OneTaskPlan());
+    $harness = feature03FakeHarness(feature03OneTaskPlan());
 
     app()->call([new ProcessWorkRequest($workRequest), 'handle']);
 
@@ -146,7 +147,7 @@ test('the PM prompt contains configured identity context workflow skills project
 
 test('successful asynchronous PM planning persists one complete browser-testable task', function () {
     [, $workRequest] = feature03PlanningFixture();
-    feature03FakeHarness($this, feature03OneTaskPlan());
+    feature03FakeHarness(feature03OneTaskPlan());
 
     app()->call([new ProcessWorkRequest($workRequest), 'handle']);
 
@@ -172,7 +173,7 @@ test('successful asynchronous PM planning persists one complete browser-testable
 
 test('multi-task PM planning persists returned order and resolves only earlier sequential dependencies', function () {
     [, $workRequest] = feature03PlanningFixture();
-    feature03FakeHarness($this, feature03MultiTaskPlan());
+    feature03FakeHarness(feature03MultiTaskPlan());
 
     app()->call([new ProcessWorkRequest($workRequest), 'handle']);
 
@@ -192,7 +193,7 @@ test('already implemented planning requires existing repository evidence and cre
     File::put($project->path.'/app/Services/ExistingFeature.php', '<?php // existing feature');
     $reason = 'The requested behavior already exists in app/Services/ExistingFeature.php and is used by the current Project workflow.';
 
-    feature03FakeHarness($this, feature03Plan([
+    feature03FakeHarness(feature03Plan([
         'summary' => 'The repository already contains the requested behavior.',
         'already_implemented' => true,
         'already_implemented_reason' => $reason,
@@ -212,7 +213,7 @@ test('already implemented planning requires existing repository evidence and cre
 test('already implemented planning is rejected when cited repository evidence does not exist', function () {
     [, $workRequest] = feature03PlanningFixture();
 
-    feature03FakeHarness($this, feature03Plan([
+    feature03FakeHarness(feature03Plan([
         'summary' => 'Already present.',
         'already_implemented' => true,
         'already_implemented_reason' => 'The implementation is in app/Services/MissingFeature.php.',
@@ -228,7 +229,7 @@ test('already implemented planning is rejected when cited repository evidence do
 
 test('malformed PM output fails without persisting tasks', function () {
     [, $workRequest] = feature03PlanningFixture();
-    feature03FakeHarness($this, '{not-json');
+    feature03FakeHarness('{not-json');
 
     app()->call([new ProcessWorkRequest($workRequest), 'handle']);
 
@@ -241,7 +242,7 @@ test('contradictory already implemented output is rejected before persistence', 
     [, $workRequest] = feature03PlanningFixture();
     $task = feature03TaskPlan();
 
-    feature03FakeHarness($this, feature03Plan([
+    feature03FakeHarness(feature03Plan([
         'summary' => 'Contradictory result.',
         'already_implemented' => true,
         'already_implemented_reason' => 'Existing implementation is in app/Services/Anything.php.',
@@ -260,7 +261,7 @@ test('a PM task without a concrete browser-testable outcome is rejected', functi
     $task = feature03TaskPlan();
     $task['browser_test_steps'] = ['Run php artisan test --filter=ProjectActivity.'];
 
-    feature03FakeHarness($this, feature03Plan([
+    feature03FakeHarness(feature03Plan([
         'summary' => 'Invalid non-browser plan.',
         'already_implemented' => false,
         'already_implemented_reason' => null,
@@ -279,7 +280,7 @@ test('a task cannot depend on its own or a later position', function () {
     $task = feature03TaskPlan();
     $task['depends_on_position'] = 1;
 
-    feature03FakeHarness($this, feature03Plan([
+    feature03FakeHarness(feature03Plan([
         'summary' => 'Invalid dependency plan.',
         'already_implemented' => false,
         'already_implemented_reason' => null,
@@ -296,7 +297,7 @@ test('a task cannot depend on its own or a later position', function () {
 test('worker failure handling records a failure without overwriting a completed result', function () {
     [, $workRequest] = feature03PlanningFixture();
     $exception = new RuntimeException('Harness temporarily unavailable.');
-    feature03FakeHarness($this, $exception);
+    feature03FakeHarness($exception);
     $job = new ProcessWorkRequest($workRequest);
 
     expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class);
@@ -317,7 +318,7 @@ test('worker failure handling records a failure without overwriting a completed 
 
 test('task persistence is atomic when a later task insert fails', function () {
     [, $workRequest] = feature03PlanningFixture();
-    feature03FakeHarness($this, feature03MultiTaskPlan());
+    feature03FakeHarness(feature03MultiTaskPlan());
     $creating = 0;
 
     Task::creating(function () use (&$creating): void {
@@ -346,7 +347,7 @@ test('task persistence is atomic when a later task insert fails', function () {
 
 test('re-running a completed planning job does not create duplicate tasks', function () {
     [, $workRequest] = feature03PlanningFixture();
-    $harness = feature03FakeHarness($this, feature03OneTaskPlan());
+    $harness = feature03FakeHarness(feature03OneTaskPlan());
     $job = new ProcessWorkRequest($workRequest);
 
     app()->call([$job, 'handle']);
@@ -428,12 +429,12 @@ function feature03PlanningFixture(): array
 }
 
 /**
- * Bind a deterministic fake Agent harness for one test and return it for assertions.
+ * Bind a deterministic fake Agent harness through Laravel's container and return it for assertions.
  */
-function feature03FakeHarness(object $testCase, string|Throwable $result): Feature03FakeAgentHarness
+function feature03FakeHarness(string|Throwable $result): Feature03FakeAgentHarness
 {
     $harness = new Feature03FakeAgentHarness($result);
-    $testCase->app->instance(AgentHarness::class, $harness);
+    app()->instance(AgentHarness::class, $harness);
 
     return $harness;
 }

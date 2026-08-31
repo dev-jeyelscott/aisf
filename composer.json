@@ -57,7 +57,7 @@
         ],
         "format": [
             "npm run check:fix",
-            "composer run lint"
+            "pint --parallel"
         ],
         "lint": [
             "pint --parallel"
