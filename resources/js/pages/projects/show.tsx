@@ -26,6 +26,36 @@ type RepositoryStatus = {
     isClean: boolean;
 };
 
+type ContextSource = {
+    type: string;
+    label: string;
+};
+
+type AgentRun = {
+    id: number;
+    attempt: number;
+    purpose: string;
+    status: string;
+    context_mode: 'initial' | 'delta';
+    submitted_input: string;
+    context_sources: ContextSource[];
+    output_summary: string | null;
+    exit_code: number | null;
+    started_at: string | null;
+    finished_at: string | null;
+};
+
+type AgentSession = {
+    id: number;
+    has_provider_continuity: boolean;
+    agent: {
+        id: number;
+        name: string;
+        role: string;
+    };
+    runs: AgentRun[];
+};
+
 type Task = {
     id: number;
     depends_on_task_id: number | null;
@@ -36,6 +66,7 @@ type Task = {
     acceptance_criteria: string[];
     verification_commands: string[];
     browser_steps: string[];
+    agent_sessions: AgentSession[];
 };
 
 type WorkRequest = {
@@ -45,11 +76,184 @@ type WorkRequest = {
     summary: string | null;
     evidence: string[] | null;
     failure_reason: string | null;
+    agent_sessions: AgentSession[];
     tasks: Task[];
 };
 
-const placeholders = ['Agents', 'Activity'];
+/**
+ * Convert persisted enum-like strings into readable operator labels.
+ */
+function humanize(value: string): string {
+    return value.replace(/_/g, ' ');
+}
 
+/**
+ * Format persisted execution timestamps for the operator's browser locale.
+ */
+function formatTimestamp(value: string | null): string {
+    if (!value) {
+        return 'In progress';
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(new Date(value));
+}
+
+/**
+ * Return status styling while retaining visible text so status is never communicated by color alone.
+ */
+function runStatusClass(status: string): string {
+    if (status === 'succeeded') {
+        return 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400';
+    }
+
+    if (status === 'failed') {
+        return 'border-destructive/30 bg-destructive/10 text-destructive';
+    }
+
+    return 'border-border bg-muted text-muted-foreground';
+}
+
+/**
+ * Render logical Agent continuity and recent model invocation details.
+ */
+function AgentSessionActivity({
+    sessions,
+    emptyLabel,
+}: {
+    sessions: AgentSession[];
+    emptyLabel: string;
+}) {
+    if (sessions.length === 0) {
+        return (
+            <p className="text-muted-foreground mt-3 text-sm">{emptyLabel}</p>
+        );
+    }
+
+    return (
+        <div className="mt-4 space-y-3">
+            {sessions.map((session) => (
+                <div
+                    key={session.id}
+                    className="border-border bg-muted/20 rounded-lg border p-3"
+                >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                            <p className="text-sm font-medium">
+                                {session.agent.name}
+                            </p>
+                            <p className="text-muted-foreground mt-0.5 text-xs capitalize">
+                                {humanize(session.agent.role)} · Logical session
+                                #{session.id}
+                            </p>
+                        </div>
+                        <span className="border-border bg-background rounded-full border px-2 py-1 text-xs">
+                            {session.has_provider_continuity
+                                ? 'Provider resume available'
+                                : 'Logical continuity only'}
+                        </span>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                        {session.runs.map((run) => (
+                            <article
+                                key={run.id}
+                                className="border-border bg-background rounded-md border p-3"
+                            >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-medium">
+                                            Run {run.attempt}
+                                        </span>
+                                        <span
+                                            className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${runStatusClass(run.status)}`}
+                                        >
+                                            {humanize(run.status)}
+                                        </span>
+                                        <span className="border-border bg-muted rounded-full border px-2 py-0.5 text-xs capitalize">
+                                            {run.context_mode} context
+                                        </span>
+                                    </div>
+                                    <span className="text-muted-foreground text-xs capitalize">
+                                        {humanize(run.purpose)}
+                                    </span>
+                                </div>
+
+                                <p className="text-muted-foreground mt-2 text-sm">
+                                    {run.output_summary ??
+                                        'No concise output summary recorded.'}
+                                </p>
+
+                                <dl className="text-muted-foreground mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                                    <div>
+                                        <dt>Started</dt>
+                                        <dd className="text-foreground mt-0.5">
+                                            {formatTimestamp(run.started_at)}
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt>Finished</dt>
+                                        <dd className="text-foreground mt-0.5">
+                                            {formatTimestamp(run.finished_at)}
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt>Exit code</dt>
+                                        <dd className="text-foreground mt-0.5">
+                                            {run.exit_code ?? 'Unavailable'}
+                                        </dd>
+                                    </div>
+                                </dl>
+
+                                <details className="border-border mt-3 rounded-md border">
+                                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                                        Inspect context sources and submitted
+                                        input
+                                    </summary>
+                                    <div className="border-border border-t p-3">
+                                        <h6 className="text-sm font-medium">
+                                            Context sources
+                                        </h6>
+                                        {run.context_sources.length > 0 ? (
+                                            <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
+                                                {run.context_sources.map(
+                                                    (source, index) => (
+                                                        <li
+                                                            key={`${run.id}-source-${index}`}
+                                                        >
+                                                            {source.label}
+                                                        </li>
+                                                    ),
+                                                )}
+                                            </ul>
+                                        ) : (
+                                            <p className="text-muted-foreground mt-2 text-sm">
+                                                No source metadata recorded.
+                                            </p>
+                                        )}
+
+                                        <h6 className="mt-4 text-sm font-medium">
+                                            Exact submitted input
+                                        </h6>
+                                        <pre className="bg-muted mt-2 max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
+                                            {run.submitted_input}
+                                        </pre>
+                                    </div>
+                                </details>
+                            </article>
+                        ))}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * Render the existing Project workspace with planning, Tasks, and durable Agent activity.
+ */
 export default function ProjectWorkspace({
     project,
     repositoryStatus,
@@ -59,6 +263,15 @@ export default function ProjectWorkspace({
     repositoryStatus: RepositoryStatus | null;
     workRequests?: WorkRequest[];
 }) {
+    const allSessions = workRequests.flatMap((request) => [
+        ...request.agent_sessions,
+        ...request.tasks.flatMap((task) => task.agent_sessions),
+    ]);
+    const visibleRunCount = allSessions.reduce(
+        (total, session) => total + session.runs.length,
+        0,
+    );
+
     return (
         <>
             <Head title={project.title} />
@@ -181,22 +394,34 @@ export default function ProjectWorkspace({
                         <div className="flex flex-wrap items-start justify-between gap-3">
                             <h2 className="font-medium">Work request</h2>
                             <span className="border-border bg-muted rounded-full border px-2.5 py-1 text-xs font-medium capitalize">
-                                {request.status.replace(/_/g, ' ')}
+                                {humanize(request.status)}
                             </span>
                         </div>
 
-                        <p className="mt-3 whitespace-pre-wrap text-sm">
+                        <p className="mt-3 text-sm whitespace-pre-wrap">
                             {request.prompt}
                         </p>
 
                         {request.summary && (
                             <div className="mt-4">
-                                <h3 className="text-sm font-medium">PM summary</h3>
-                                <p className="text-muted-foreground mt-1 whitespace-pre-wrap text-sm">
+                                <h3 className="text-sm font-medium">
+                                    PM summary
+                                </h3>
+                                <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
                                     {request.summary}
                                 </p>
                             </div>
                         )}
+
+                        <div className="mt-4">
+                            <h3 className="text-sm font-medium">
+                                Project Manager activity
+                            </h3>
+                            <AgentSessionActivity
+                                sessions={request.agent_sessions}
+                                emptyLabel="No Project Manager session has been recorded for this WorkRequest yet."
+                            />
+                        </div>
 
                         {request.evidence && request.evidence.length > 0 && (
                             <div className="mt-4">
@@ -205,7 +430,9 @@ export default function ProjectWorkspace({
                                 </h3>
                                 <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
                                     {request.evidence.map((evidence, index) => (
-                                        <li key={`${request.id}-evidence-${index}`}>
+                                        <li
+                                            key={`${request.id}-evidence-${index}`}
+                                        >
                                             {evidence}
                                         </li>
                                     ))}
@@ -245,7 +472,7 @@ export default function ProjectWorkspace({
                                         >
                                             <div className="flex flex-wrap items-start justify-between gap-2">
                                                 <div>
-                                                    <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                                                    <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                                                         Task {task.position}
                                                     </p>
                                                     <h4 className="mt-1 font-medium">
@@ -270,21 +497,29 @@ export default function ProjectWorkspace({
                                                         {task.objective}
                                                     </p>
                                                 </div>
+
                                                 <div>
                                                     <h5 className="font-medium">
-                                                        Implementation specification
+                                                        Implementation
+                                                        specification
                                                     </h5>
                                                     <p className="text-muted-foreground mt-1 whitespace-pre-wrap">
-                                                        {task.implementation_spec}
+                                                        {
+                                                            task.implementation_spec
+                                                        }
                                                     </p>
                                                 </div>
+
                                                 <div>
                                                     <h5 className="font-medium">
                                                         Acceptance criteria
                                                     </h5>
                                                     <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5">
                                                         {task.acceptance_criteria.map(
-                                                            (criterion, index) => (
+                                                            (
+                                                                criterion,
+                                                                index,
+                                                            ) => (
                                                                 <li
                                                                     key={`${task.id}-acceptance-${index}`}
                                                                 >
@@ -294,24 +529,31 @@ export default function ProjectWorkspace({
                                                         )}
                                                     </ul>
                                                 </div>
+
                                                 <div>
                                                     <h5 className="font-medium">
                                                         Verification commands
                                                     </h5>
                                                     <ul className="mt-1 space-y-2">
                                                         {task.verification_commands.map(
-                                                            (command, index) => (
+                                                            (
+                                                                command,
+                                                                index,
+                                                            ) => (
                                                                 <li
                                                                     key={`${task.id}-command-${index}`}
                                                                 >
                                                                     <code className="bg-muted block overflow-x-auto rounded px-2 py-1.5 text-xs">
-                                                                        {command}
+                                                                        {
+                                                                            command
+                                                                        }
                                                                     </code>
                                                                 </li>
                                                             ),
                                                         )}
                                                     </ul>
                                                 </div>
+
                                                 <div>
                                                     <h5 className="font-medium">
                                                         Browser test steps
@@ -329,6 +571,18 @@ export default function ProjectWorkspace({
                                                     </ol>
                                                 </div>
                                             </div>
+
+                                            <div className="border-border mt-5 border-t pt-4">
+                                                <h5 className="text-sm font-medium">
+                                                    Agent sessions and runs
+                                                </h5>
+                                                <AgentSessionActivity
+                                                    sessions={
+                                                        task.agent_sessions
+                                                    }
+                                                    emptyLabel="No Agent session has been recorded for this Task yet."
+                                                />
+                                            </div>
                                         </article>
                                     );
                                 })}
@@ -338,20 +592,19 @@ export default function ProjectWorkspace({
                 ))}
 
                 <section
-                    aria-label="Workspace areas"
-                    className="grid gap-4 sm:grid-cols-2"
+                    aria-labelledby="activity-heading"
+                    className="border-border bg-card rounded-xl border p-5"
                 >
-                    {placeholders.map((name) => (
-                        <div
-                            key={name}
-                            className="border-border bg-card min-h-36 rounded-xl border p-5"
-                        >
-                            <h2 className="font-medium">{name}</h2>
-                            <p className="text-muted-foreground mt-2 text-sm">
-                                Coming soon.
-                            </p>
-                        </div>
-                    ))}
+                    <h2 id="activity-heading" className="font-medium">
+                        Activity
+                    </h2>
+                    <p className="text-muted-foreground mt-2 text-sm">
+                        {allSessions.length} logical Agent session
+                        {allSessions.length === 1 ? '' : 's'} and{' '}
+                        {visibleRunCount} recent run
+                        {visibleRunCount === 1 ? '' : 's'} are visible above in
+                        their WorkRequest or Task context.
+                    </p>
                 </section>
             </div>
         </>

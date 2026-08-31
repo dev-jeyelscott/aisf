@@ -6,6 +6,7 @@ use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentHarness;
+use App\Services\AgentHarnessResult;
 use App\Services\ProjectAgentProvisioner;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -28,24 +29,60 @@ class Feature03FakeAgentHarness extends AgentHarness
     public function __construct(private readonly string|Throwable $result) {}
 
     /**
-     * Capture PM execution inputs while replacing the external Codex or Claude process.
-     *
-     * @param  array<string, mixed>  $schema
+     * Keep Feature 03 tests on deterministic fresh context rather than provider continuation.
      */
-    public function execute(ProjectAgent $agent, string $repositoryPath, string $prompt, array $schema): string
+    public function canResume(ProjectAgent $agent): bool
     {
+        return false;
+    }
+
+    /**
+     * Capture PM initial execution inputs while replacing the external Codex or Claude process.
+     *
+     * @param  array<string, mixed>|null  $schema
+     */
+    public function start(
+        ProjectAgent $agent,
+        string $repositoryPath,
+        string $prompt,
+        ?array $schema = null,
+    ): AgentHarnessResult {
         $this->executions++;
         $this->prompt = $prompt;
-        $this->schema = $schema;
+        $this->schema = $schema ?? [];
 
         if ($this->result instanceof Throwable) {
             throw $this->result;
         }
 
-        return $this->result;
+        return new AgentHarnessResult(
+            successful: true,
+            output: $this->result,
+            providerSessionId: null,
+            exitCode: 0,
+        );
+    }
+
+    /**
+     * Reuse the deterministic fake response if a test explicitly exercises resume.
+     *
+     * @param  array<string, mixed>|null  $schema
+     */
+    public function resume(
+        ProjectAgent $agent,
+        string $repositoryPath,
+        string $providerSessionId,
+        string $prompt,
+        ?array $schema = null,
+    ): AgentHarnessResult {
+        return $this->start(
+            $agent,
+            $repositoryPath,
+            $prompt,
+            $schema,
+        );
     }
 }
-
 test('a work request is persisted as submitted and planning is queued', function () {
     Queue::fake();
     $project = Project::factory()->create();
@@ -483,9 +520,13 @@ function feature03TemporaryGitRepository(): string
     Process::path($path)->run(['git', 'add', 'README.md'])->throw();
     Process::path($path)->run([
         'git',
-        '-c', 'user.name=AISF Tests',
-        '-c', 'user.email=aisf-tests@example.test',
-        'commit', '-m', 'Initial commit',
+        '-c',
+        'user.name=AISF Tests',
+        '-c',
+        'user.email=aisf-tests@example.test',
+        'commit',
+        '-m',
+        'Initial commit',
     ])->throw();
 
     return $path;
