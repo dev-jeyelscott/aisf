@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\UpdateProjectRequest;
 use App\Models\Project;
+use App\Services\ProjectAgentProvisioner;
 use App\Services\RepositoryInspector;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
@@ -33,9 +34,10 @@ class ProjectController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(StoreProjectRequest $request): RedirectResponse
+    public function store(StoreProjectRequest $request, ProjectAgentProvisioner $provisioner): RedirectResponse
     {
         $project = Project::query()->create($request->validated());
+        $provisioner->ensureFor($project);
 
         return to_route('projects.show', $project);
     }
@@ -43,8 +45,10 @@ class ProjectController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(Project $project, RepositoryInspector $repositoryInspector): Response
+    public function show(Project $project, RepositoryInspector $repositoryInspector, ProjectAgentProvisioner $provisioner): Response
     {
+        $provisioner->ensureFor($project);
+
         return Inertia::render('projects/show', [
             'project' => $project->only(['id', 'title', 'description', 'path', 'enabled']),
             'repositoryStatus' => $project->enabled ? $repositoryInspector->status($project->path) : null,

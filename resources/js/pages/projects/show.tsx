@@ -1,7 +1,14 @@
 import { Head, Link } from '@inertiajs/react';
-import { AlertCircle, CheckCircle2, GitBranch, Pencil } from 'lucide-react';
+import {
+    AlertCircle,
+    CheckCircle2,
+    GitBranch,
+    Pencil,
+    Users,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
+import { index as agents } from '@/routes/projects/agents';
 
 type Project = {
     id: number;
@@ -48,6 +55,12 @@ export default function ProjectWorkspace({
                         <Link href={edit(project)}>
                             <Pencil />
                             Edit Project
+                        </Link>
+                    </Button>
+                    <Button asChild>
+                        <Link href={agents(project)}>
+                            <Users />
+                            Agents
                         </Link>
                     </Button>
                 </div>

@@ -1,10 +1,10 @@
-import { Form } from '@inertiajs/react';
-import InputError from '@/components/input-error';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Spinner } from '@/components/ui/spinner';
+import { Form } from "@inertiajs/react";
+import InputError from "@/components/input-error";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 
 type Project = {
     id: number;
@@ -19,7 +19,7 @@ export function ProjectForm({
     project,
     submitLabel,
 }: {
-    action: { action: string; method: 'post' };
+    action: { action: string; method: "post" };
     project?: Project;
     submitLabel: string;
 }) {
@@ -45,7 +45,7 @@ export function ProjectForm({
                         <textarea
                             id="description"
                             name="description"
-                            defaultValue={project?.description ?? ''}
+                            defaultValue={project?.description ?? ""}
                             placeholder="What are you building?"
                             className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-24 rounded-md border px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                         />
@@ -58,7 +58,7 @@ export function ProjectForm({
                             id="path"
                             name="path"
                             required
-                            defaultValue={project?.path ?? '/workspace'}
+                            defaultValue={project?.path}
                             placeholder="/path/to/repository"
                             aria-describedby="path-help"
                         />
