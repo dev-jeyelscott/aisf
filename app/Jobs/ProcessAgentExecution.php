@@ -159,10 +159,10 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
      */
     private function completeTask(Task $task, array $completion, AgentExecutionRunner $runner): void
     {
-        $integration = null;
+        $pullRequest = null;
 
         if (filled($completion['commit_sha'])) {
-            $integration = $runner->integrateReportedCommit($task, $completion['commit_sha']);
+            $pullRequest = $runner->integrateReportedCommit($task, $completion['commit_sha'], $completion['summary']);
         }
 
         $update = [
@@ -171,12 +171,9 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
             'blocked_reason' => null,
         ];
 
-        if ($integration !== null) {
-            $update['commit_sha'] = $integration['commit_sha'];
-            $update['integrated_sha'] = $integration['commit_sha'];
-            $update['integrated_at'] = now();
-            $update['worktree_cleaned_at'] = $integration['worktree_cleaned'] ? now() : null;
-            $update['branch_deleted_at'] = $integration['branch_deleted'] ? now() : null;
+        if ($pullRequest !== null) {
+            $update['commit_sha'] = $pullRequest['commit_sha'];
+            $update['pull_request_url'] = $pullRequest['pull_request_url'];
         }
 
         Task::query()->whereKey($task->getKey())

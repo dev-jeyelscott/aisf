@@ -126,72 +126,47 @@ class TaskWorktreeManager
     }
 
     /**
-     * Fast-forward the original Project branch to a verified commit, then clean the integrated Task workspace without invoking an Agent.
+     * Push the Task branch to the Project's Git remote and open (or reuse) a pull request for human review,
+     * instead of merging directly. The worktree and branch are left in place until the PR is merged elsewhere.
      *
-     * @return array{commit_sha: string, worktree_cleaned: bool, branch_deleted: bool}
+     * @return array{commit_sha: string, pull_request_url: string}
      */
-    public function integrateCommit(Task $task, string $commitSha): array
+    public function pushAndOpenPullRequest(Task $task, string $commitSha, string $title, string $body): array
     {
-        $task->loadMissing('workRequest.project');
-        $projectPath = $this->repositoryInspector->normalizePath($task->workRequest->project->path);
-        $repositoryError = $this->repositoryInspector->validationError($projectPath);
-
-        if ($repositoryError !== null) {
-            throw new UnexpectedValueException($repositoryError);
-        }
-
+        $worktreePath = (string) $task->worktree_path;
         $branchName = (string) $task->branch_name;
         $baseBranch = (string) $task->base_branch;
         $commitSha = trim($commitSha);
-        $worktreePath = (string) $task->worktree_path;
 
-        if ($branchName === '' || $baseBranch === '' || $commitSha === '' || $worktreePath === '' || ! is_dir($worktreePath)) {
-            throw new UnexpectedValueException('The Task is missing Git information required for integration.');
+        if ($worktreePath === '' || ! is_dir($worktreePath) || $branchName === '' || $baseBranch === '' || $commitSha === '') {
+            throw new UnexpectedValueException('The Task is missing Git information required to open a pull request.');
         }
 
-        $currentBranch = $this->requiredOutput($projectPath, ['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], 'The Project repository must be on its original branch before integration.');
+        $push = $this->run($worktreePath, ['git', 'push', '-u', 'origin', $branchName]);
 
-        if ($currentBranch !== $baseBranch) {
-            throw new UnexpectedValueException('The Project repository is no longer on the Task’s original branch, so fast-forward integration cannot proceed.');
+        if ($push === null || $push->failed()) {
+            throw new UnexpectedValueException('Unable to push the Task branch to the Project’s Git remote.');
         }
 
-        $projectStatus = $this->requiredOutput($projectPath, ['git', '--no-optional-locks', 'status', '--porcelain=v1'], 'Unable to verify whether the Project repository is clean before integration.');
+        $create = $this->run($worktreePath, [
+            'gh', 'pr', 'create',
+            '--base', $baseBranch,
+            '--head', $branchName,
+            '--title', $title,
+            '--body', $body,
+        ]);
 
-        if ($projectStatus !== '') {
-            throw new UnexpectedValueException('The Project repository has uncommitted changes, so fast-forward integration cannot proceed.');
+        if ($create !== null && $create->successful() && trim($create->output()) !== '') {
+            return ['commit_sha' => $commitSha, 'pull_request_url' => trim($create->output())];
         }
 
-        $canFastForward = $this->run($projectPath, ['git', 'merge-base', '--is-ancestor', 'HEAD', $commitSha]);
+        $existing = $this->run($worktreePath, ['gh', 'pr', 'view', $branchName, '--json', 'url', '-q', '.url']);
 
-        if ($canFastForward === null || $canFastForward->failed()) {
-            throw new UnexpectedValueException('The Project branch has moved and cannot fast-forward to the approved Task commit.');
+        if ($existing !== null && $existing->successful() && trim($existing->output()) !== '') {
+            return ['commit_sha' => $commitSha, 'pull_request_url' => trim($existing->output())];
         }
 
-        $merge = $this->run($projectPath, ['git', 'merge', '--ff-only', $commitSha]);
-
-        if ($merge === null || $merge->failed()) {
-            throw new UnexpectedValueException('Fast-forward integration of the approved Task commit failed.');
-        }
-
-        $integratedSha = $this->requiredOutput($projectPath, ['git', 'rev-parse', 'HEAD'], 'Unable to verify the integrated Project commit.');
-
-        if ($integratedSha !== $commitSha) {
-            throw new RuntimeException('The Project HEAD does not match the verified approved Task commit after fast-forward integration.');
-        }
-
-        $cleanup = $this->run($projectPath, ['git', 'worktree', 'remove', $worktreePath]);
-
-        if ($cleanup === null || $cleanup->failed()) {
-            throw new RuntimeException('The approved Task was integrated, but its worktree could not be cleaned up.');
-        }
-
-        $deleteBranch = $this->run($projectPath, ['git', 'branch', '-d', $branchName]);
-
-        return [
-            'commit_sha' => $integratedSha,
-            'worktree_cleaned' => true,
-            'branch_deleted' => $deleteBranch !== null && $deleteBranch->successful(),
-        ];
+        throw new UnexpectedValueException('Unable to open a pull request for the Task branch.');
     }
 
     /**

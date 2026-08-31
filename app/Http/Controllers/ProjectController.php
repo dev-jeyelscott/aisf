@@ -180,9 +180,8 @@ class ProjectController extends Controller
                 'blocked_reason',
                 'last_handoff',
                 'commit_sha',
-                'integrated_sha',
+                'pull_request_url',
             ]),
-            'integrated_at' => $task->integrated_at?->toIso8601String(),
             'changed_files' => filled($task->worktree_path)
                 ? $worktreeManager->changedFiles($task)
                 : [],

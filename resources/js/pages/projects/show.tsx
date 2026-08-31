@@ -72,8 +72,7 @@ type Task = {
     blocked_reason: string | null;
     last_handoff: Handoff;
     commit_sha: string | null;
-    integrated_sha: string | null;
-    integrated_at: string | null;
+    pull_request_url: string | null;
     changed_files: string[];
     agent_sessions: AgentSession[];
 };
@@ -622,18 +621,19 @@ export default function ProjectWorkspace({
                                                     <p className="text-foreground mt-1 font-mono text-xs break-all">
                                                         {task.commit_sha}
                                                     </p>
-                                                    {task.integrated_sha && (
-                                                        <p className="text-muted-foreground mt-2 text-sm">
-                                                            Integrated at{' '}
-                                                            {formatTimestamp(
-                                                                task.integrated_at,
-                                                            )}
-                                                            . Project HEAD:{' '}
-                                                            <code className="bg-muted rounded px-1.5 py-0.5 text-xs">
-                                                                {
-                                                                    task.integrated_sha
+                                                    {task.pull_request_url && (
+                                                        <p className="mt-2 text-sm">
+                                                            <a
+                                                                href={
+                                                                    task.pull_request_url
                                                                 }
-                                                            </code>
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-foreground underline underline-offset-2"
+                                                            >
+                                                                View pull
+                                                                request
+                                                            </a>
                                                         </p>
                                                     )}
                                                 </div>

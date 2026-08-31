@@ -9,6 +9,7 @@ use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
 use App\Services\ProjectAgentProvisioner;
 use App\Services\TaskWorktreeManager;
+use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Queue;
@@ -125,13 +126,12 @@ test('a trivial documentation Task completes directly from the Coder with no QA 
         ->and($task->commit_sha)->toBeNull();
 });
 
-test('a Coder completion with a reported commit SHA is verified and integrated into the Project branch', function () {
-    [$project, , $task] = feature09TaskFixture();
+test('a Coder completion with a reported commit SHA is verified, pushed, and opened as a pull request', function () {
+    [, , $task] = feature09TaskFixture();
 
     app(TaskWorktreeManager::class)->ensureWorktree($task);
     $task->refresh();
     $worktreePath = (string) $task->worktree_path;
-    $head = trim(Process::path($worktreePath)->run(['git', 'rev-parse', 'HEAD'])->output());
 
     File::put($worktreePath.'/README.md', "# MiseLedger\n");
     Process::path($worktreePath)->run(['git', 'add', 'README.md'])->throw();
@@ -147,17 +147,50 @@ test('a Coder completion with a reported commit SHA is verified and integrated i
         'commit_sha' => $commitSha,
     ]));
 
+    feature09FakeRemoteGit([
+        'git push' => fn () => Process::result(exitCode: 0),
+        'gh pr create' => fn () => Process::result(output: "https://github.com/example/aisf/pull/42\n"),
+    ]);
+
     app()->call([new ProcessAgentExecution($task), 'handle']);
 
     $task->refresh();
 
     expect($task->status)->toBe('completed')
         ->and($task->commit_sha)->toBe($commitSha)
-        ->and($task->integrated_sha)->toBe($commitSha);
+        ->and($task->pull_request_url)->toBe('https://github.com/example/aisf/pull/42');
+});
 
-    $projectHead = trim(Process::path($project->path)->run(['git', 'rev-parse', 'HEAD'])->output());
-    expect($projectHead)->toBe($commitSha)
-        ->and($head)->not->toBe($commitSha);
+test('a pull request is reused when one already exists for the Task branch', function () {
+    [, , $task] = feature09TaskFixture();
+
+    app(TaskWorktreeManager::class)->ensureWorktree($task);
+    $task->refresh();
+    $worktreePath = (string) $task->worktree_path;
+
+    File::put($worktreePath.'/README.md', "# MiseLedger\n");
+    Process::path($worktreePath)->run(['git', 'add', 'README.md'])->throw();
+    Process::path($worktreePath)->run([
+        'git', '-c', 'user.name=AISF Tests', '-c', 'user.email=aisf-tests@example.test',
+        'commit', '-m', 'docs: add readme',
+    ])->throw();
+    $commitSha = trim(Process::path($worktreePath)->run(['git', 'rev-parse', 'HEAD'])->output());
+
+    feature09FakeHarness(feature09Completion([
+        'status' => 'completed',
+        'summary' => 'Added and committed the README.',
+        'commit_sha' => $commitSha,
+    ]));
+
+    feature09FakeRemoteGit([
+        'git push' => fn () => Process::result(exitCode: 0),
+        'gh pr create' => fn () => Process::result(exitCode: 1, errorOutput: 'a pull request for branch already exists'),
+        'gh pr view' => fn () => Process::result(output: "https://github.com/example/aisf/pull/7\n"),
+    ]);
+
+    app()->call([new ProcessAgentExecution($task), 'handle']);
+
+    expect($task->refresh()->pull_request_url)->toBe('https://github.com/example/aisf/pull/7');
 });
 
 test('a Coder hand-off to QA moves the Task to waiting and the next execution invokes the QA Agent', function () {
@@ -274,6 +307,34 @@ test('Run now only dispatches for a pending or waiting Task', function () {
     $this->post(route('projects.tasks.run', [$project, $task]));
     Queue::assertPushed(ProcessAgentExecution::class, fn (ProcessAgentExecution $job) => $job->subject->is($task));
 });
+
+/**
+ * Fake only the given command prefixes (e.g. 'git push', 'gh pr create') while letting every other
+ * Process call — the real git verification commands TaskWorktreeManager still needs — run for real.
+ *
+ * @param  array<string, (callable(): ProcessResult)>  $fakedPrefixes
+ */
+function feature09FakeRemoteGit(array $fakedPrefixes): void
+{
+    Process::fake(function ($process) use ($fakedPrefixes) {
+        $line = implode(' ', (array) $process->command);
+
+        foreach ($fakedPrefixes as $prefix => $result) {
+            if (str_starts_with($line, $prefix)) {
+                return $result();
+            }
+        }
+
+        $real = new Symfony\Component\Process\Process((array) $process->command, $process->path);
+        $real->run();
+
+        return Process::result(
+            output: $real->getOutput(),
+            errorOutput: $real->getErrorOutput(),
+            exitCode: $real->getExitCode(),
+        );
+    });
+}
 
 /**
  * @return array{0: Project, 1: WorkRequest}

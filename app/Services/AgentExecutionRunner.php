@@ -99,11 +99,11 @@ class AgentExecutionRunner
     }
 
     /**
-     * Verify and integrate an Agent-reported commit for a completed Task, or return null if none was reported.
+     * Verify an Agent-reported commit and open a pull request for it, or return null if none was reported.
      *
-     * @return array{commit_sha: string, worktree_cleaned: bool, branch_deleted: bool}|null
+     * @return array{commit_sha: string, pull_request_url: string}|null
      */
-    public function integrateReportedCommit(Task $task, ?string $commitSha): ?array
+    public function integrateReportedCommit(Task $task, ?string $commitSha, string $summary): ?array
     {
         if (! filled($commitSha)) {
             return null;
@@ -111,7 +111,7 @@ class AgentExecutionRunner
 
         $verifiedSha = $this->worktreeManager->verifyCommitExists($task, $commitSha);
 
-        return $this->worktreeManager->integrateCommit($task, $verifiedSha);
+        return $this->worktreeManager->pushAndOpenPullRequest($task, $verifiedSha, $task->title, $summary);
     }
 
     /**
