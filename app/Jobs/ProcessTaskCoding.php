@@ -17,9 +17,9 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
     use Queueable;
 
     /**
-     * Keep worker execution below the repository's default database queue retry_after value.
+     * Let the Coder Agent harness run to completion without an artificial wall-clock kill.
      */
-    public int $timeout = 90;
+    public int $timeout = 0;
 
     /**
      * Allow one retry for transient harness or worktree infrastructure failures.
@@ -59,7 +59,7 @@ class ProcessTaskCoding implements ShouldBeUnique, ShouldQueue
         $taskId = (int) $this->task->getKey();
         $task = Task::query()->findOrFail($taskId);
 
-        if (! in_array($task->status, ['queued', 'changes_required'], true)) {
+        if (! in_array($task->status, ['queued', 'changes_required', 'coding'], true)) {
             return;
         }
 

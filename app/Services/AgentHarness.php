@@ -187,8 +187,7 @@ class AgentHarness
 
             $result = Process::path($repositoryPath)
                 ->input($prompt)
-                ->timeout(70)
-                ->idleTimeout(70)
+                ->forever()
                 ->run($command);
 
             if (! $supportsResume) {
@@ -366,8 +365,7 @@ class AgentHarness
 
         $result = Process::path($repositoryPath)
             ->input($prompt)
-            ->timeout(70)
-            ->idleTimeout(70)
+            ->forever()
             ->run($command);
 
         try {

@@ -16,7 +16,10 @@ class ProcessTaskCommit implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
-    public int $timeout = 90;
+    /**
+     * Let the Coder Agent harness run to completion without an artificial wall-clock kill.
+     */
+    public int $timeout = 0;
 
     public int $tries = 2;
 
@@ -45,7 +48,7 @@ class ProcessTaskCommit implements ShouldBeUnique, ShouldQueue
         $taskId = (int) $this->task->getKey();
         $task = Task::query()->findOrFail($taskId);
 
-        if ($task->status !== 'approved' || $task->approved_at === null) {
+        if (! in_array($task->status, ['approved', 'committing', 'integrating'], true) || $task->approved_at === null) {
             return;
         }
 

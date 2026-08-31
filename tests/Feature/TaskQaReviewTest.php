@@ -249,6 +249,28 @@ test('QA cannot approve directly while acceptance criteria, verification, or the
         ->and($task->blocked_reason)->toContain('cannot approve');
 });
 
+test('a queue retry after a transient QA harness failure re-runs the review instead of leaving the Task stuck in qa_reviewing', function () {
+    [, , $task] = feature06ReadyForQaFixture();
+
+    feature06FakeHarness([
+        new RuntimeException('The process exceeded the timeout of 70 seconds.'),
+    ]);
+
+    expect(fn () => app()->call([new ProcessTaskQaReview($task), 'handle']))
+        ->toThrow(RuntimeException::class);
+
+    expect($task->refresh()->status)->toBe('qa_reviewing');
+
+    feature06FakeHarness([
+        feature06QaCompletion($task, status: 'approved'),
+    ]);
+
+    app()->call([new ProcessTaskQaReview($task), 'handle']);
+
+    expect($task->refresh()->status)->toBe('approved')
+        ->and($task->qaReviews()->sole()->status)->toBe('approved');
+});
+
 test('QA output that fails to evaluate every acceptance criterion or verification command blocks the Task', function () {
     [, , $task] = feature06ReadyForQaFixture();
 

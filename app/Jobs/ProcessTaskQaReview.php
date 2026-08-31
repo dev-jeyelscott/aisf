@@ -18,9 +18,9 @@ class ProcessTaskQaReview implements ShouldBeUnique, ShouldQueue
     use Queueable;
 
     /**
-     * Keep worker execution below the repository's default database queue retry_after value.
+     * Let the QA Agent harness run to completion without an artificial wall-clock kill.
      */
-    public int $timeout = 90;
+    public int $timeout = 0;
 
     /**
      * Allow one retry for transient harness infrastructure failures.
@@ -58,7 +58,7 @@ class ProcessTaskQaReview implements ShouldBeUnique, ShouldQueue
         $taskId = (int) $this->task->getKey();
         $task = Task::query()->findOrFail($taskId);
 
-        if ($task->status !== 'ready_for_qa') {
+        if (! in_array($task->status, ['ready_for_qa', 'qa_reviewing'], true)) {
             return;
         }
 
