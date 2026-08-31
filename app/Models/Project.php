@@ -32,4 +32,9 @@ class Project extends Model
     {
         return $this->hasMany(ProjectSkill::class);
     }
+
+    public function workRequests(): HasMany
+    {
+        return $this->hasMany(WorkRequest::class)->latest();
+    }
 }

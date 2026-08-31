@@ -52,6 +52,7 @@ class ProjectController extends Controller
         return Inertia::render('projects/show', [
             'project' => $project->only(['id', 'title', 'description', 'path', 'enabled']),
             'repositoryStatus' => $project->enabled ? $repositoryInspector->status($project->path) : null,
+            'workRequests' => $project->workRequests()->with('tasks')->get(),
         ]);
     }
 

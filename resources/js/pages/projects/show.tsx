@@ -7,8 +7,11 @@ import {
     Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import InputError from '@/components/input-error';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
+import { Form } from '@inertiajs/react';
+import { store as storeWorkRequest } from '@/routes/projects/work-requests';
 
 type Project = {
     id: number;
@@ -29,9 +32,11 @@ const placeholders = ['Prompt', 'Tasks', 'Agents', 'Activity'];
 export default function ProjectWorkspace({
     project,
     repositoryStatus,
+    workRequests = [],
 }: {
     project: Project;
     repositoryStatus: RepositoryStatus | null;
+    workRequests?: { id: number; prompt: string; status: string; summary: string | null; evidence: string[] | null; tasks: { id:number; title:string; objective:string; position:number }[] }[];
 }) {
     return (
         <>
@@ -120,6 +125,9 @@ export default function ProjectWorkspace({
                         </div>
                     )}
                 </section>
+
+                <section className="border-border bg-card rounded-xl border p-5"><h2 className="font-medium">Prompt</h2><Form {...storeWorkRequest.form(project)} className="mt-3 grid gap-3">{({processing, errors}) => <><textarea name="prompt" required placeholder="Describe the work to plan…" className="border-input bg-background min-h-24 rounded-md border p-3 text-sm"/><InputError message={errors.prompt}/><Button type="submit" disabled={processing}>Submit for planning</Button></>}</Form></section>
+                {workRequests.map(request => <section key={request.id} className="border-border bg-card rounded-xl border p-5"><div className="flex justify-between"><h2 className="font-medium">Work request</h2><span className="text-muted-foreground text-sm capitalize">{request.status}</span></div><p className="mt-2 text-sm">{request.prompt}</p>{request.summary && <p className="text-muted-foreground mt-2 text-sm">{request.summary}</p>}<ol className="mt-3 list-decimal pl-5 text-sm">{request.tasks.map(task => <li key={task.id}>{task.title}: {task.objective}</li>)}</ol></section>)}
 
                 <section
                     aria-label="Workspace areas"
