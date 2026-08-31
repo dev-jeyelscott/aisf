@@ -78,7 +78,7 @@ type VerificationResult = {
 };
 
 type BrowserResult = {
-    mode: 'automated' | 'manual';
+    mode: 'automated' | 'manual' | 'not_required';
     passed: boolean | null;
     notes: string;
 };
@@ -409,11 +409,13 @@ function QaReviewEvidence({ reviews }: { reviews: QaReview[] }) {
                             Browser acceptance
                         </h6>
                         <p className="text-muted-foreground mt-1 text-xs">
-                            {review.browser_result.mode === 'automated'
-                                ? review.browser_result.passed
-                                    ? 'Automated browser check passed.'
-                                    : 'Automated browser check failed.'
-                                : 'Automated browser tooling was unavailable — manual operator confirmation required.'}
+                            {review.browser_result.mode === 'not_required'
+                                ? 'No browser check was required for this Task.'
+                                : review.browser_result.mode === 'automated'
+                                  ? review.browser_result.passed
+                                      ? 'Automated browser check passed.'
+                                      : 'Automated browser check failed.'
+                                  : 'Automated browser tooling was unavailable — manual operator confirmation required.'}
                             {review.browser_result.notes
                                 ? ` ${review.browser_result.notes}`
                                 : ''}

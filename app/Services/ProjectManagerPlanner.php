@@ -223,7 +223,6 @@ class ProjectManagerPlanner
                             ],
                             'browser_test_steps' => [
                                 'type' => 'array',
-                                'minItems' => 1,
                                 'items' => [
                                     'type' => 'string',
                                     'minLength' => 1,
@@ -330,9 +329,8 @@ class ProjectManagerPlanner
                 'string',
             ],
             'tasks.*.browser_test_steps' => [
-                'required',
+                'present',
                 'array',
-                'min:1',
             ],
             'tasks.*.browser_test_steps.*' => [
                 'required',
@@ -476,9 +474,9 @@ class ProjectManagerPlanner
                 $task['browser_test_steps'],
             );
 
-            if (! $this->isBrowserTestable($browserSteps)) {
+            if ($browserSteps !== [] && ! $this->isBrowserTestable($browserSteps)) {
                 throw new UnexpectedValueException(sprintf(
-                    'Task %d does not contain a concrete independently browser-testable outcome.',
+                    'Task %d browser test steps must contain a concrete independently browser-testable outcome.',
                     $position,
                 ));
             }

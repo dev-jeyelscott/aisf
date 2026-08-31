@@ -236,6 +236,23 @@ test('a Task without automated browser tooling requires an explicit operator con
         ->and($review->operator_confirmed_at)->not->toBeNull();
 });
 
+test('QA approves a Task without browser test steps when its other checks pass', function () {
+    [, , $task] = feature06ReadyForQaFixture();
+    $task->update(['browser_steps' => []]);
+
+    feature06FakeHarness([
+        feature06QaCompletion($task, status: 'approved', browserMode: 'not_required', browserPassed: null),
+    ]);
+
+    app()->call([new ProcessTaskQaReview($task), 'handle']);
+
+    $review = $task->refresh()->qaReviews()->sole();
+
+    expect($task->status)->toBe('approved')
+        ->and($review->browser_result['mode'])->toBe('not_required')
+        ->and($review->browser_result['passed'])->toBeNull();
+});
+
 test('QA cannot approve directly while acceptance criteria, verification, or the browser check remain unmet', function () {
     [, , $task] = feature06ReadyForQaFixture();
 

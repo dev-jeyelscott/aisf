@@ -257,7 +257,7 @@ class TaskQaReviewer
             'verification_results.*.passed' => ['required', 'boolean'],
             'verification_results.*.notes' => ['present', 'string'],
             'browser_result' => ['required', 'array'],
-            'browser_result.mode' => ['required', 'string', 'in:automated,manual'],
+            'browser_result.mode' => ['required', 'string', 'in:automated,manual,not_required'],
             'browser_result.passed' => ['present', 'nullable', 'boolean'],
             'browser_result.notes' => ['present', 'string'],
             'findings' => ['present', 'array'],
@@ -296,10 +296,17 @@ class TaskQaReviewer
         $allCriteriaMet = collect($completion['acceptance_criteria_results'])->every(fn (array $result): bool => $result['met'] === true);
         $allVerificationPassed = collect($completion['verification_results'])->every(fn (array $result): bool => $result['passed'] === true);
         $browserResult = $completion['browser_result'];
+        $requiresBrowserCheck = $task->browser_steps !== [];
 
-        if ($status === 'manual_browser_check_required' && $browserResult['mode'] !== 'manual') {
+        if (! $requiresBrowserCheck && ($browserResult['mode'] !== 'not_required' || $browserResult['passed'] !== null)) {
             throw new UnexpectedValueException(
-                'A manual browser check status requires the browser result mode to be manual.',
+                'Quality Assurance must mark the browser check as not required when the Task has no browser test steps.',
+            );
+        }
+
+        if ($status === 'manual_browser_check_required' && (! $requiresBrowserCheck || $browserResult['mode'] !== 'manual')) {
+            throw new UnexpectedValueException(
+                'A manual browser check status requires browser test steps and the browser result mode to be manual.',
             );
         }
 
@@ -316,9 +323,9 @@ class TaskQaReviewer
                 );
             }
 
-            if ($browserResult['mode'] !== 'automated' || $browserResult['passed'] !== true) {
+            if ($requiresBrowserCheck && ($browserResult['mode'] !== 'automated' || $browserResult['passed'] !== true)) {
                 throw new UnexpectedValueException(
-                    'Quality Assurance can only approve directly when an automated browser check has passed. Otherwise, request a manual browser check.',
+                    'Quality Assurance can only approve directly when a required automated browser check has passed. Otherwise, request a manual browser check.',
                 );
             }
         }

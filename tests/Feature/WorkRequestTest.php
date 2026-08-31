@@ -259,13 +259,37 @@ test('contradictory already implemented output is rejected before persistence', 
         ->and($workRequest->tasks()->count())->toBe(0);
 });
 
-test('a PM task without a concrete browser-testable outcome is rejected', function () {
+test('a PM task without browser work is planned without browser test steps', function () {
+    [, $workRequest] = feature03PlanningFixture();
+    $task = feature03TaskPlan();
+    $task['title'] = 'Update the deployment guide';
+    $task['objective'] = 'Correct the deployment guide instructions.';
+    $task['implementation_spec'] = 'Update the deployment guide with the corrected command.';
+    $task['acceptance_criteria'] = ['The deployment guide contains the corrected command.'];
+    $task['browser_test_steps'] = [];
+
+    feature03FakeHarness(feature03Plan([
+        'summary' => 'Update the deployment guide.',
+        'already_implemented' => false,
+        'already_implemented_reason' => null,
+        'tasks' => [$task],
+    ]));
+
+    app()->call([new ProcessWorkRequest($workRequest), 'handle']);
+
+    $workRequest->refresh();
+
+    expect($workRequest->status)->toBe('planned')
+        ->and($workRequest->tasks()->sole()->browser_steps)->toBe([]);
+});
+
+test('a PM task with browser test steps without a browser-testable outcome is rejected', function () {
     [, $workRequest] = feature03PlanningFixture();
     $task = feature03TaskPlan();
     $task['browser_test_steps'] = ['Run php artisan test --filter=ProjectActivity.'];
 
     feature03FakeHarness(feature03Plan([
-        'summary' => 'Invalid non-browser plan.',
+        'summary' => 'Invalid browser test plan.',
         'already_implemented' => false,
         'already_implemented_reason' => null,
         'tasks' => [$task],
@@ -274,7 +298,7 @@ test('a PM task without a concrete browser-testable outcome is rejected', functi
     app()->call([new ProcessWorkRequest($workRequest), 'handle']);
 
     expect($workRequest->refresh()->status)->toBe('failed')
-        ->and($workRequest->failure_reason)->toContain('browser-testable outcome')
+        ->and($workRequest->failure_reason)->toContain('browser test steps')
         ->and($workRequest->tasks()->count())->toBe(0);
 });
 
