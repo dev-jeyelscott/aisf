@@ -22,11 +22,15 @@ class WorkRequest extends Model
      */
     protected function casts(): array
     {
-        return ['evidence' => 'array'];
+        return [
+            'evidence' => 'array',
+        ];
     }
 
     /**
      * Return the Project that owns this WorkRequest.
+     *
+     * @return BelongsTo<Project, $this>
      */
     public function project(): BelongsTo
     {
@@ -35,6 +39,8 @@ class WorkRequest extends Model
 
     /**
      * Return Tasks in authoritative planning order.
+     *
+     * @return HasMany<Task, $this>
      */
     public function tasks(): HasMany
     {
@@ -43,6 +49,8 @@ class WorkRequest extends Model
 
     /**
      * Return the Project Manager logical session associated with this WorkRequest.
+     *
+     * @return HasMany<AgentSession, $this>
      */
     public function agentSessions(): HasMany
     {

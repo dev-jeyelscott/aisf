@@ -22,16 +22,22 @@ class AgentSessionManager
         Task|WorkRequest $subject,
     ): AgentSession {
         if (! $agent->exists) {
-            throw new UnexpectedValueException('A persisted Project Agent is required for an Agent session.');
+            throw new UnexpectedValueException(
+                'A persisted Project Agent is required for an Agent session.',
+            );
         }
 
         if ($subject instanceof WorkRequest) {
             if ($agent->role !== 'project_manager') {
-                throw new UnexpectedValueException('Only the Project Manager Agent may own a WorkRequest session.');
+                throw new UnexpectedValueException(
+                    'Only the Project Manager Agent may own a WorkRequest session.',
+                );
             }
 
             if ((int) $agent->project_id !== (int) $subject->project_id) {
-                throw new UnexpectedValueException('The Project Manager and WorkRequest must belong to the same Project.');
+                throw new UnexpectedValueException(
+                    'The Project Manager and WorkRequest must belong to the same Project.',
+                );
             }
 
             return AgentSession::query()->createOrFirst([
@@ -41,14 +47,27 @@ class AgentSessionManager
             ]);
         }
 
-        if (! in_array($agent->role, ['coder', 'quality_assurance_specialist'], true)) {
-            throw new UnexpectedValueException('Only Coder or Quality Assurance Specialist Agents may own a Task session.');
+        if (
+            ! in_array(
+                $agent->role,
+                ['coder', 'quality_assurance_specialist'],
+                true,
+            )
+        ) {
+            throw new UnexpectedValueException(
+                'Only Coder or Quality Assurance Specialist Agents may own a Task session.',
+            );
         }
 
         $subject->loadMissing('workRequest');
 
-        if ((int) $agent->project_id !== (int) $subject->workRequest->project_id) {
-            throw new UnexpectedValueException('The Agent and Task must belong to the same Project.');
+        if (
+            (int) $agent->project_id
+            !== (int) $subject->workRequest->project_id
+        ) {
+            throw new UnexpectedValueException(
+                'The Agent and Task must belong to the same Project.',
+            );
         }
 
         return AgentSession::query()->createOrFirst([
@@ -61,7 +80,7 @@ class AgentSessionManager
     /**
      * Allocate the next monotonically increasing run attempt while holding the logical session row lock.
      *
-     * @param  array{mode: string, input: string, sources: array<int, array<string, string>>}  $context
+     * @param  array<string, mixed>  $context
      */
     public function startRun(
         AgentSession $session,
@@ -71,40 +90,61 @@ class AgentSessionManager
         $purpose = trim($purpose);
 
         if ($purpose === '') {
-            throw new UnexpectedValueException('An Agent run purpose is required.');
+            throw new UnexpectedValueException(
+                'An Agent run purpose is required.',
+            );
         }
+
+        $mode = $context['mode'] ?? null;
+        $input = $context['input'] ?? null;
+        $sources = $context['sources'] ?? null;
 
         if (
-            ! isset($context['mode'], $context['input'], $context['sources'])
-            || ! in_array($context['mode'], ['initial', 'delta'], true)
-            || ! is_string($context['input'])
-            || trim($context['input']) === ''
-            || ! is_array($context['sources'])
+            ! is_string($mode)
+            || ! in_array($mode, ['initial', 'delta'], true)
+            || ! is_string($input)
+            || trim($input) === ''
+            || ! is_array($sources)
         ) {
-            throw new UnexpectedValueException('Agent run context must contain a valid mode, submitted input, and context sources.');
+            throw new UnexpectedValueException(
+                'Agent run context must contain a valid mode, submitted input, and context sources.',
+            );
         }
 
-        return DB::transaction(function () use ($session, $purpose, $context): AgentRun {
-            $lockedSession = AgentSession::query()
-                ->lockForUpdate()
-                ->findOrFail($session->getKey());
+        $sessionId = (int) $session->getKey();
 
-            $attempt = ((int) ($lockedSession->runs()->max('attempt') ?? 0)) + 1;
+        return DB::transaction(
+            function () use (
+                $sessionId,
+                $purpose,
+                $mode,
+                $input,
+                $sources,
+            ): AgentRun {
+                $lockedSession = AgentSession::query()
+                    ->lockForUpdate()
+                    ->findOrFail($sessionId);
 
-            return $lockedSession->runs()->create([
-                'purpose' => $purpose,
-                'status' => 'running',
-                'attempt' => $attempt,
-                'context_mode' => $context['mode'],
-                'submitted_input' => $context['input'],
-                'context_sources' => array_values($context['sources']),
-                'output_summary' => null,
-                'raw_output_reference' => null,
-                'exit_code' => null,
-                'started_at' => now(),
-                'finished_at' => null,
-            ]);
-        }, attempts: 3);
+                $attempt = (
+                    (int) ($lockedSession->runs()->max('attempt') ?? 0)
+                ) + 1;
+
+                return $lockedSession->runs()->create([
+                    'purpose' => $purpose,
+                    'status' => 'running',
+                    'attempt' => $attempt,
+                    'context_mode' => $mode,
+                    'submitted_input' => $input,
+                    'context_sources' => array_values($sources),
+                    'output_summary' => null,
+                    'raw_output_reference' => null,
+                    'exit_code' => null,
+                    'started_at' => now(),
+                    'finished_at' => null,
+                ]);
+            },
+            attempts: 3,
+        );
     }
 
     /**
@@ -121,28 +161,38 @@ class AgentSessionManager
         $providerSessionId = trim((string) $providerSessionId);
 
         if (Str::length($providerSessionId) > 255) {
-            throw new UnexpectedValueException('The provider session identifier exceeds the supported length.');
+            throw new UnexpectedValueException(
+                'The provider session identifier exceeds the supported length.',
+            );
         }
 
-        DB::transaction(function () use ($session, $providerSessionId): void {
-            $lockedSession = AgentSession::query()
-                ->lockForUpdate()
-                ->findOrFail($session->getKey());
+        $sessionId = (int) $session->getKey();
 
-            if ($lockedSession->provider_session_id === null) {
-                $lockedSession->update([
-                    'provider_session_id' => $providerSessionId,
-                ]);
+        DB::transaction(
+            function () use ($sessionId, $providerSessionId): void {
+                $lockedSession = AgentSession::query()
+                    ->lockForUpdate()
+                    ->findOrFail($sessionId);
 
-                return;
-            }
+                if ($lockedSession->provider_session_id === null) {
+                    $lockedSession->update([
+                        'provider_session_id' => $providerSessionId,
+                    ]);
 
-            if ($lockedSession->provider_session_id !== $providerSessionId) {
-                throw new UnexpectedValueException(
-                    'The provider returned a different session identifier while resuming the logical Agent session.',
-                );
-            }
-        }, attempts: 3);
+                    return;
+                }
+
+                if (
+                    $lockedSession->provider_session_id
+                    !== $providerSessionId
+                ) {
+                    throw new UnexpectedValueException(
+                        'The provider returned a different session identifier while resuming the logical Agent session.',
+                    );
+                }
+            },
+            attempts: 3,
+        );
 
         $session->refresh();
     }
@@ -212,6 +262,10 @@ class AgentSessionManager
     {
         $summary = preg_replace('/\s+/u', ' ', trim($output));
 
-        return Str::limit($summary ?? trim($output), 1000, '');
+        return Str::limit(
+            $summary ?? trim($output),
+            1000,
+            '',
+        );
     }
 }

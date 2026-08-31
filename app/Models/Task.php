@@ -9,6 +9,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property list<string> $acceptance_criteria
+ * @property list<string> $verification_commands
+ * @property list<string> $browser_steps
+ */
 #[Fillable(['depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps'])]
 class Task extends Model
 {
@@ -31,6 +36,8 @@ class Task extends Model
 
     /**
      * Return the WorkRequest that owns this planned Task.
+     *
+     * @return BelongsTo<WorkRequest, $this>
      */
     public function workRequest(): BelongsTo
     {
@@ -39,6 +46,8 @@ class Task extends Model
 
     /**
      * Return Coder and QA logical sessions associated with this Task.
+     *
+     * @return HasMany<AgentSession, $this>
      */
     public function agentSessions(): HasMany
     {

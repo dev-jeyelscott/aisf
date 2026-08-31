@@ -24,6 +24,8 @@ class AgentSession extends Model
 
     /**
      * Return the configured Project Agent that owns this logical session.
+     *
+     * @return BelongsTo<ProjectAgent, $this>
      */
     public function projectAgent(): BelongsTo
     {
@@ -32,6 +34,8 @@ class AgentSession extends Model
 
     /**
      * Return the Task subject when this is a Coder or QA session.
+     *
+     * @return BelongsTo<Task, $this>
      */
     public function task(): BelongsTo
     {
@@ -40,6 +44,8 @@ class AgentSession extends Model
 
     /**
      * Return the WorkRequest subject when this is a Project Manager session.
+     *
+     * @return BelongsTo<WorkRequest, $this>
      */
     public function workRequest(): BelongsTo
     {
@@ -48,6 +54,8 @@ class AgentSession extends Model
 
     /**
      * Return model invocation attempts in deterministic attempt order.
+     *
+     * @return HasMany<AgentRun, $this>
      */
     public function runs(): HasMany
     {

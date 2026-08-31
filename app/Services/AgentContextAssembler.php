@@ -6,7 +6,6 @@ use App\Models\ProjectAgent;
 use App\Models\ProjectSkill;
 use App\Models\Task;
 use App\Models\WorkRequest;
-use Illuminate\Database\Eloquent\Collection;
 use UnexpectedValueException;
 
 class AgentContextAssembler
@@ -24,13 +23,14 @@ class AgentContextAssembler
         $workRequest->loadMissing('project');
         $this->assertEnabledRole($agent, 'project_manager');
 
+        $project = $workRequest->project;
         $skills = $this->enabledSkills($agent);
         $skillContext = $this->formatSkills(
             $skills,
             'No enabled Skills are assigned to this Project Manager.',
         );
-        $projectDescription = filled($workRequest->project->description)
-            ? $workRequest->project->description
+        $projectDescription = filled($project->description)
+            ? $project->description
             : 'No project description provided.';
         $identity = filled($agent->identity)
             ? $agent->identity
@@ -55,7 +55,7 @@ ENABLED ASSIGNED SKILLS, IN CONFIGURED ORDER
 {$skillContext}
 
 PROJECT
-Title: {$workRequest->project->title}
+Title: {$project->title}
 Description: {$projectDescription}
 Repository path: {$repositoryPath}
 
@@ -129,6 +129,8 @@ PROMPT,
     {
         $this->assertTaskAgent($task, $agent, 'coder');
         $task->loadMissing('workRequest.project');
+
+        $project = $task->workRequest->project;
         $skills = $this->enabledSkills($agent);
         $identity = filled($agent->identity)
             ? $agent->identity
@@ -139,8 +141,8 @@ PROMPT,
         $workflow = filled($agent->workflow_instructions)
             ? $agent->workflow_instructions
             : 'No additional workflow instructions configured.';
-        $projectDescription = filled($task->workRequest->project->description)
-            ? $task->workRequest->project->description
+        $projectDescription = filled($project->description)
+            ? $project->description
             : 'No project description provided.';
         $skillContext = $this->formatSkills(
             $skills,
@@ -164,19 +166,19 @@ PROJECT DESCRIPTION
 {$projectDescription}
 
 PROJECT PATH
-{$task->workRequest->project->path}
+{$project->path}
 
 TASK IMPLEMENTATION SPECIFICATION
 {$task->implementation_spec}
 
 ACCEPTANCE CRITERIA
-{$this->formatNumberedList($task->acceptance_criteria ?? [])}
+{$this->formatNumberedList($task->acceptance_criteria)}
 
 VERIFICATION COMMANDS
-{$this->formatNumberedList($task->verification_commands ?? [])}
+{$this->formatNumberedList($task->verification_commands)}
 
 BROWSER TEST STEPS
-{$this->formatNumberedList($task->browser_steps ?? [])}
+{$this->formatNumberedList($task->browser_steps)}
 PROMPT;
 
         return [
@@ -210,29 +212,54 @@ PROMPT;
         ?string $operatorInstruction = null,
     ): array {
         $qaFindings = $this->normalizeStringList($qaFindings);
-        $unresolvedAcceptanceCriteria = $this->normalizeStringList($unresolvedAcceptanceCriteria);
-        $operatorInstruction = filled($operatorInstruction) ? trim((string) $operatorInstruction) : null;
+        $unresolvedAcceptanceCriteria = $this->normalizeStringList(
+            $unresolvedAcceptanceCriteria,
+        );
+        $operatorInstruction = filled($operatorInstruction)
+            ? trim((string) $operatorInstruction)
+            : null;
 
-        if ($qaFindings === [] && $unresolvedAcceptanceCriteria === [] && $operatorInstruction === null) {
-            throw new UnexpectedValueException('A Coder fix delta requires new QA findings, unresolved acceptance criteria, or an operator instruction.');
+        if (
+            $qaFindings === []
+            && $unresolvedAcceptanceCriteria === []
+            && $operatorInstruction === null
+        ) {
+            throw new UnexpectedValueException(
+                'A Coder fix delta requires new QA findings, unresolved acceptance criteria, or an operator instruction.',
+            );
         }
 
+        /** @var list<string> $sections */
         $sections = [];
+
+        /** @var list<array{type: string, label: string}> $sources */
         $sources = [];
 
         if ($qaFindings !== []) {
-            $sections[] = "LATEST QA FINDINGS\n".$this->formatNumberedList($qaFindings);
-            $sources[] = ['type' => 'qa_findings', 'label' => 'Latest QA findings'];
+            $sections[] = "LATEST QA FINDINGS\n".$this->formatNumberedList(
+                $qaFindings,
+            );
+            $sources[] = [
+                'type' => 'qa_findings',
+                'label' => 'Latest QA findings',
+            ];
         }
 
         if ($unresolvedAcceptanceCriteria !== []) {
-            $sections[] = "CURRENTLY UNRESOLVED ACCEPTANCE CRITERIA\n".$this->formatNumberedList($unresolvedAcceptanceCriteria);
-            $sources[] = ['type' => 'acceptance_criteria', 'label' => 'Currently unresolved acceptance criteria'];
+            $sections[] = "CURRENTLY UNRESOLVED ACCEPTANCE CRITERIA\n"
+                .$this->formatNumberedList($unresolvedAcceptanceCriteria);
+            $sources[] = [
+                'type' => 'acceptance_criteria',
+                'label' => 'Currently unresolved acceptance criteria',
+            ];
         }
 
         if ($operatorInstruction !== null) {
             $sections[] = "NEW OPERATOR INSTRUCTION\n{$operatorInstruction}";
-            $sources[] = ['type' => 'operator_instruction', 'label' => 'New operator instruction'];
+            $sources[] = [
+                'type' => 'operator_instruction',
+                'label' => 'New operator instruction',
+            ];
         }
 
         return [
@@ -254,12 +281,18 @@ PROMPT;
         string $worktreePath,
         array $changedFiles,
     ): array {
-        $this->assertTaskAgent($task, $agent, 'quality_assurance_specialist');
+        $this->assertTaskAgent(
+            $task,
+            $agent,
+            'quality_assurance_specialist',
+        );
 
         $worktreePath = trim($worktreePath);
 
         if ($worktreePath === '') {
-            throw new UnexpectedValueException('QA initial context requires a worktree path.');
+            throw new UnexpectedValueException(
+                'QA initial context requires a worktree path.',
+            );
         }
 
         $changedFiles = $this->normalizeStringList($changedFiles);
@@ -295,7 +328,7 @@ TASK IMPLEMENTATION SPECIFICATION
 {$task->implementation_spec}
 
 ACCEPTANCE CRITERIA
-{$this->formatNumberedList($task->acceptance_criteria ?? [])}
+{$this->formatNumberedList($task->acceptance_criteria)}
 
 WORKTREE PATH
 {$worktreePath}
@@ -304,10 +337,10 @@ CURRENT CHANGED FILES
 {$this->formatNumberedList($changedFiles)}
 
 VERIFICATION COMMANDS
-{$this->formatNumberedList($task->verification_commands ?? [])}
+{$this->formatNumberedList($task->verification_commands)}
 
 BROWSER TEST STEPS
-{$this->formatNumberedList($task->browser_steps ?? [])}
+{$this->formatNumberedList($task->browser_steps)}
 PROMPT;
 
         return [
@@ -343,10 +376,14 @@ PROMPT;
         $coderFixSummary = trim($coderFixSummary);
 
         if ($coderFixSummary === '') {
-            throw new UnexpectedValueException('QA re-review delta requires the latest Coder fix summary.');
+            throw new UnexpectedValueException(
+                'QA re-review delta requires the latest Coder fix summary.',
+            );
         }
 
-        $unresolvedFindings = $this->normalizeStringList($unresolvedFindings);
+        $unresolvedFindings = $this->normalizeStringList(
+            $unresolvedFindings,
+        );
         $changedFiles = $this->normalizeStringList($changedFiles);
 
         return [
@@ -376,12 +413,15 @@ PROMPT,
      */
     private function enabledSkills(ProjectAgent $agent): array
     {
-        /** @var Collection<int, ProjectSkill> $skills */
-        $skills = $agent->skills()
-            ->where('project_skills.enabled', true)
-            ->get();
+        /** @var list<ProjectSkill> $skills */
+        $skills = array_values(
+            $agent->skills()
+                ->where('project_skills.enabled', true)
+                ->get()
+                ->all(),
+        );
 
-        return $skills->values()->all();
+        return $skills;
     }
 
     /**
@@ -389,8 +429,10 @@ PROMPT,
      *
      * @param  list<ProjectSkill>  $skills
      */
-    private function formatSkills(array $skills, string $emptyMessage): string
-    {
+    private function formatSkills(
+        array $skills,
+        string $emptyMessage,
+    ): string {
         if ($skills === []) {
             return $emptyMessage;
         }
@@ -421,15 +463,20 @@ PROMPT,
      */
     private function skillSources(array $skills): array
     {
-        return collect($skills)
-            ->values()
-            ->map(
-                fn (ProjectSkill $skill, int $index): array => [
-                    'type' => 'skill',
-                    'label' => sprintf('Skill %d: %s', $index + 1, $skill->name),
-                ],
-            )
-            ->all();
+        $sources = [];
+
+        foreach ($skills as $index => $skill) {
+            $sources[] = [
+                'type' => 'skill',
+                'label' => sprintf(
+                    'Skill %d: %s',
+                    $index + 1,
+                    $skill->name,
+                ),
+            ];
+        }
+
+        return $sources;
     }
 
     /**
@@ -447,7 +494,13 @@ PROMPT,
 
         return collect($values)
             ->values()
-            ->map(fn (string $value, int $index): string => sprintf('%d. %s', $index + 1, $value))
+            ->map(
+                fn (string $value, int $index): string => sprintf(
+                    '%d. %s',
+                    $index + 1,
+                    $value,
+                ),
+            )
             ->implode("\n");
     }
 
@@ -459,18 +512,26 @@ PROMPT,
      */
     private function normalizeStringList(array $values): array
     {
-        return collect($values)
-            ->filter(fn (mixed $value): bool => is_string($value) && trim($value) !== '')
-            ->map(fn (string $value): string => trim($value))
-            ->values()
-            ->all();
+        $normalized = [];
+
+        foreach ($values as $value) {
+            $value = trim($value);
+
+            if ($value !== '') {
+                $normalized[] = $value;
+            }
+        }
+
+        return $normalized;
     }
 
     /**
      * Verify an enabled configured Agent is being used for its intended role.
      */
-    private function assertEnabledRole(ProjectAgent $agent, string $expectedRole): void
-    {
+    private function assertEnabledRole(
+        ProjectAgent $agent,
+        string $expectedRole,
+    ): void {
         if (! $agent->enabled || $agent->role !== $expectedRole) {
             throw new UnexpectedValueException(sprintf(
                 'An enabled %s Agent is required for this context.',
@@ -482,13 +543,21 @@ PROMPT,
     /**
      * Verify a Task Agent has the expected role and belongs to the same Project as the Task.
      */
-    private function assertTaskAgent(Task $task, ProjectAgent $agent, string $expectedRole): void
-    {
+    private function assertTaskAgent(
+        Task $task,
+        ProjectAgent $agent,
+        string $expectedRole,
+    ): void {
         $this->assertEnabledRole($agent, $expectedRole);
         $task->loadMissing('workRequest');
 
-        if ((int) $task->workRequest->project_id !== (int) $agent->project_id) {
-            throw new UnexpectedValueException('The Agent and Task must belong to the same Project.');
+        if (
+            (int) $task->workRequest->project_id
+            !== (int) $agent->project_id
+        ) {
+            throw new UnexpectedValueException(
+                'The Agent and Task must belong to the same Project.',
+            );
         }
     }
 }

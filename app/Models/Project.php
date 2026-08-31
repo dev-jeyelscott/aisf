@@ -14,8 +14,16 @@ class Project extends Model
     /** @use HasFactory<ProjectFactory> */
     use HasFactory;
 
+    /**
+     * Projects do not persist conventional created_at or updated_at timestamps.
+     */
     public $timestamps = false;
 
+    /**
+     * Cast persisted Project state to application types.
+     *
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [
@@ -23,16 +31,31 @@ class Project extends Model
         ];
     }
 
+    /**
+     * Return configured Agents that belong to this Project.
+     *
+     * @return HasMany<ProjectAgent, $this>
+     */
     public function agents(): HasMany
     {
         return $this->hasMany(ProjectAgent::class);
     }
 
+    /**
+     * Return reusable Skills that belong to this Project.
+     *
+     * @return HasMany<ProjectSkill, $this>
+     */
     public function skills(): HasMany
     {
         return $this->hasMany(ProjectSkill::class);
     }
 
+    /**
+     * Return Project WorkRequests with the newest requests first.
+     *
+     * @return HasMany<WorkRequest, $this>
+     */
     public function workRequests(): HasMany
     {
         return $this->hasMany(WorkRequest::class)->latest();

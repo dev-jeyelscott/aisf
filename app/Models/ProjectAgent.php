@@ -23,11 +23,16 @@ class ProjectAgent extends Model
      */
     protected function casts(): array
     {
-        return ['settings' => 'array', 'enabled' => 'boolean'];
+        return [
+            'settings' => 'array',
+            'enabled' => 'boolean',
+        ];
     }
 
     /**
      * Return the Project that owns this configured Agent.
+     *
+     * @return BelongsTo<Project, $this>
      */
     public function project(): BelongsTo
     {
@@ -36,14 +41,20 @@ class ProjectAgent extends Model
 
     /**
      * Return assigned Skills in configured pivot order.
+     *
+     * @return BelongsToMany<ProjectSkill, $this>
      */
     public function skills(): BelongsToMany
     {
-        return $this->belongsToMany(ProjectSkill::class)->withPivot('position')->orderByPivot('position');
+        return $this->belongsToMany(ProjectSkill::class)
+            ->withPivot('position')
+            ->orderByPivot('position');
     }
 
     /**
      * Return durable logical sessions owned by this configured Agent.
+     *
+     * @return HasMany<AgentSession, $this>
      */
     public function sessions(): HasMany
     {

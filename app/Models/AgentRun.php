@@ -7,7 +7,12 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property Carbon $started_at
+ * @property Carbon|null $finished_at
+ */
 #[Fillable([
     'purpose',
     'status',
@@ -44,6 +49,8 @@ class AgentRun extends Model
 
     /**
      * Return the durable logical Agent session for this invocation.
+     *
+     * @return BelongsTo<AgentSession, $this>
      */
     public function agentSession(): BelongsTo
     {

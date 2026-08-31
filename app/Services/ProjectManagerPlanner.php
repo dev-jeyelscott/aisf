@@ -43,9 +43,14 @@ class ProjectManagerPlanner
     public function plan(WorkRequest $workRequest): array
     {
         $workRequest->loadMissing('project');
+
         $project = $workRequest->project;
-        $repositoryPath = $this->repositoryInspector->normalizePath($project->path);
-        $repositoryError = $this->repositoryInspector->validationError($repositoryPath);
+        $repositoryPath = $this->repositoryInspector->normalizePath(
+            $project->path,
+        );
+        $repositoryError = $this->repositoryInspector->validationError(
+            $repositoryPath,
+        );
 
         if ($repositoryError !== null) {
             throw new UnexpectedValueException($repositoryError);
@@ -57,10 +62,15 @@ class ProjectManagerPlanner
             ->first();
 
         if ($agent === null) {
-            throw new UnexpectedValueException('The Project requires an enabled Project Manager Agent before planning can run.');
+            throw new UnexpectedValueException(
+                'The Project requires an enabled Project Manager Agent before planning can run.',
+            );
         }
 
-        $session = $this->sessionManager->forSubject($agent, $workRequest);
+        $session = $this->sessionManager->forSubject(
+            $agent,
+            $workRequest,
+        );
         $canResume = $session->runs()->exists()
             && filled($session->provider_session_id)
             && $this->harness->canResume($agent);
@@ -104,11 +114,15 @@ class ProjectManagerPlanner
 
             if (! $result->successful || $result->output === null) {
                 throw new RuntimeException(
-                    $result->failureMessage ?? 'Project Manager harness execution failed.',
+                    $result->failureMessage
+                        ?? 'Project Manager harness execution failed.',
                 );
             }
 
-            $plan = $this->validateOutput($result->output, $repositoryPath);
+            $plan = $this->validateOutput(
+                $result->output,
+                $repositoryPath,
+            );
 
             $this->sessionManager->completeRun(
                 $run,
@@ -138,14 +152,29 @@ class ProjectManagerPlanner
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['summary', 'already_implemented', 'already_implemented_reason', 'tasks'],
+            'required' => [
+                'summary',
+                'already_implemented',
+                'already_implemented_reason',
+                'tasks',
+            ],
             'properties' => [
-                'summary' => ['type' => 'string', 'minLength' => 1],
-                'already_implemented' => ['type' => 'boolean'],
+                'summary' => [
+                    'type' => 'string',
+                    'minLength' => 1,
+                ],
+                'already_implemented' => [
+                    'type' => 'boolean',
+                ],
                 'already_implemented_reason' => [
                     'anyOf' => [
-                        ['type' => 'string', 'minLength' => 1],
-                        ['type' => 'null'],
+                        [
+                            'type' => 'string',
+                            'minLength' => 1,
+                        ],
+                        [
+                            'type' => 'null',
+                        ],
                     ],
                 ],
                 'tasks' => [
@@ -163,28 +192,52 @@ class ProjectManagerPlanner
                             'depends_on_position',
                         ],
                         'properties' => [
-                            'title' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 255],
-                            'objective' => ['type' => 'string', 'minLength' => 1],
-                            'implementation_spec' => ['type' => 'string', 'minLength' => 1],
+                            'title' => [
+                                'type' => 'string',
+                                'minLength' => 1,
+                                'maxLength' => 255,
+                            ],
+                            'objective' => [
+                                'type' => 'string',
+                                'minLength' => 1,
+                            ],
+                            'implementation_spec' => [
+                                'type' => 'string',
+                                'minLength' => 1,
+                            ],
                             'acceptance_criteria' => [
                                 'type' => 'array',
                                 'minItems' => 1,
-                                'items' => ['type' => 'string', 'minLength' => 1],
+                                'items' => [
+                                    'type' => 'string',
+                                    'minLength' => 1,
+                                ],
                             ],
                             'verification_commands' => [
                                 'type' => 'array',
                                 'minItems' => 1,
-                                'items' => ['type' => 'string', 'minLength' => 1],
+                                'items' => [
+                                    'type' => 'string',
+                                    'minLength' => 1,
+                                ],
                             ],
                             'browser_test_steps' => [
                                 'type' => 'array',
                                 'minItems' => 1,
-                                'items' => ['type' => 'string', 'minLength' => 1],
+                                'items' => [
+                                    'type' => 'string',
+                                    'minLength' => 1,
+                                ],
                             ],
                             'depends_on_position' => [
                                 'anyOf' => [
-                                    ['type' => 'integer', 'minimum' => 1],
-                                    ['type' => 'null'],
+                                    [
+                                        'type' => 'integer',
+                                        'minimum' => 1,
+                                    ],
+                                    [
+                                        'type' => 'null',
+                                    ],
                                 ],
                             ],
                         ],
@@ -212,21 +265,37 @@ class ProjectManagerPlanner
      *     }>
      * }
      */
-    private function validateOutput(string $output, string $repositoryPath): array
-    {
+    private function validateOutput(
+        string $output,
+        string $repositoryPath,
+    ): array {
         try {
-            $plan = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+            $plan = json_decode(
+                $output,
+                true,
+                flags: JSON_THROW_ON_ERROR,
+            );
         } catch (JsonException $exception) {
-            throw new UnexpectedValueException('The Project Manager returned malformed JSON.', previous: $exception);
+            throw new UnexpectedValueException(
+                'The Project Manager returned malformed JSON.',
+                previous: $exception,
+            );
         }
 
         if (! is_array($plan) || array_is_list($plan)) {
-            throw new UnexpectedValueException('The Project Manager response must be one structured JSON object.');
+            throw new UnexpectedValueException(
+                'The Project Manager response must be one structured JSON object.',
+            );
         }
 
         $this->assertExactKeys(
             $plan,
-            ['summary', 'already_implemented', 'already_implemented_reason', 'tasks'],
+            [
+                'summary',
+                'already_implemented',
+                'already_implemented_reason',
+                'tasks',
+            ],
             'Project Manager response',
         );
 
@@ -238,33 +307,80 @@ class ProjectManagerPlanner
             'tasks.*' => ['required', 'array'],
             'tasks.*.title' => ['required', 'string', 'max:255'],
             'tasks.*.objective' => ['required', 'string'],
-            'tasks.*.implementation_spec' => ['required', 'string'],
-            'tasks.*.acceptance_criteria' => ['required', 'array', 'min:1'],
-            'tasks.*.acceptance_criteria.*' => ['required', 'string'],
-            'tasks.*.verification_commands' => ['required', 'array', 'min:1'],
-            'tasks.*.verification_commands.*' => ['required', 'string'],
-            'tasks.*.browser_test_steps' => ['required', 'array', 'min:1'],
-            'tasks.*.browser_test_steps.*' => ['required', 'string'],
-            'tasks.*.depends_on_position' => ['nullable', 'integer', 'min:1'],
+            'tasks.*.implementation_spec' => [
+                'required',
+                'string',
+            ],
+            'tasks.*.acceptance_criteria' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+            'tasks.*.acceptance_criteria.*' => [
+                'required',
+                'string',
+            ],
+            'tasks.*.verification_commands' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+            'tasks.*.verification_commands.*' => [
+                'required',
+                'string',
+            ],
+            'tasks.*.browser_test_steps' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+            'tasks.*.browser_test_steps.*' => [
+                'required',
+                'string',
+            ],
+            'tasks.*.depends_on_position' => [
+                'nullable',
+                'integer',
+                'min:1',
+            ],
         ]);
 
         if ($validator->fails()) {
-            throw new UnexpectedValueException('The Project Manager response does not satisfy the required planning contract.');
+            throw new UnexpectedValueException(
+                'The Project Manager response does not satisfy the required planning contract.',
+            );
         }
 
-        /** @var array{summary: string, already_implemented: bool, already_implemented_reason: string|null, tasks: array<int, array<string, mixed>>} $plan */
+        /**
+         * Base validation above proves the top-level scalar fields and that
+         * Tasks are an array. Individual Task object shapes are validated
+         * below before their more precise type is asserted.
+         *
+         * @var array{
+         *     summary: string,
+         *     already_implemented: bool,
+         *     already_implemented_reason: string|null,
+         *     tasks: array<int, mixed>
+         * } $plan
+         */
         if (! array_is_list($plan['tasks'])) {
-            throw new UnexpectedValueException('Project Manager Tasks must be returned as an ordered JSON array.');
+            throw new UnexpectedValueException(
+                'Project Manager Tasks must be returned as an ordered JSON array.',
+            );
         }
 
         $summary = trim($plan['summary']);
         $alreadyImplemented = $plan['already_implemented'];
-        $alreadyImplementedReason = is_string($plan['already_implemented_reason'])
+        $alreadyImplementedReason = is_string(
+            $plan['already_implemented_reason'],
+        )
             ? trim($plan['already_implemented_reason'])
             : null;
 
         if ($summary === '') {
-            throw new UnexpectedValueException('The Project Manager summary cannot be empty.');
+            throw new UnexpectedValueException(
+                'The Project Manager summary cannot be empty.',
+            );
         }
 
         if ($alreadyImplemented) {
@@ -278,10 +394,12 @@ class ProjectManagerPlanner
                 );
             }
 
-            if (! $this->containsExistingRepositoryEvidence(
-                $alreadyImplementedReason,
-                $repositoryPath,
-            )) {
+            if (
+                ! $this->containsExistingRepositoryEvidence(
+                    $alreadyImplementedReason,
+                    $repositoryPath,
+                )
+            ) {
                 throw new UnexpectedValueException(
                     'An already-implemented result must cite concrete evidence from an existing repository path.',
                 );
@@ -295,7 +413,10 @@ class ProjectManagerPlanner
             ];
         }
 
-        if ($alreadyImplementedReason !== null || $plan['tasks'] === []) {
+        if (
+            $alreadyImplementedReason !== null
+            || $plan['tasks'] === []
+        ) {
             throw new UnexpectedValueException(
                 'A remaining-work result requires one or more Tasks and no already-implemented reason.',
             );
@@ -310,27 +431,45 @@ class ProjectManagerPlanner
                 );
             }
 
-            $this->assertExactKeys($task, [
-                'title',
-                'objective',
-                'implementation_spec',
-                'acceptance_criteria',
-                'verification_commands',
-                'browser_test_steps',
-                'depends_on_position',
-            ], sprintf('Task %d', $index + 1));
+            $this->assertExactKeys(
+                $task,
+                [
+                    'title',
+                    'objective',
+                    'implementation_spec',
+                    'acceptance_criteria',
+                    'verification_commands',
+                    'browser_test_steps',
+                    'depends_on_position',
+                ],
+                sprintf('Task %d', $index + 1),
+            );
 
-            /** @var array{title: string, objective: string, implementation_spec: string, acceptance_criteria: array<int, string>, verification_commands: array<int, string>, browser_test_steps: array<int, string>, depends_on_position: int|null} $task */
+            /**
+             * Exact key and Laravel validation checks above establish the
+             * normalized Task input shape used by persistence.
+             *
+             * @var array{
+             *     title: string,
+             *     objective: string,
+             *     implementation_spec: string,
+             *     acceptance_criteria: array<int, string>,
+             *     verification_commands: array<int, string>,
+             *     browser_test_steps: array<int, string>,
+             *     depends_on_position: int|null
+             * } $task
+             */
             $position = $index + 1;
             $dependsOnPosition = $task['depends_on_position'];
 
-            if ($dependsOnPosition !== null && $dependsOnPosition >= $position) {
-                throw new UnexpectedValueException(
-                    sprintf(
-                        'Task %d may depend only on an earlier Task position.',
-                        $position,
-                    ),
-                );
+            if (
+                $dependsOnPosition !== null
+                && $dependsOnPosition >= $position
+            ) {
+                throw new UnexpectedValueException(sprintf(
+                    'Task %d may depend only on an earlier Task position.',
+                    $position,
+                ));
             }
 
             $browserSteps = $this->normalizeStringList(
@@ -338,18 +477,18 @@ class ProjectManagerPlanner
             );
 
             if (! $this->isBrowserTestable($browserSteps)) {
-                throw new UnexpectedValueException(
-                    sprintf(
-                        'Task %d does not contain a concrete independently browser-testable outcome.',
-                        $position,
-                    ),
-                );
+                throw new UnexpectedValueException(sprintf(
+                    'Task %d does not contain a concrete independently browser-testable outcome.',
+                    $position,
+                ));
             }
 
             $normalizedTasks[] = [
                 'title' => trim($task['title']),
                 'objective' => trim($task['objective']),
-                'implementation_spec' => trim($task['implementation_spec']),
+                'implementation_spec' => trim(
+                    $task['implementation_spec'],
+                ),
                 'acceptance_criteria' => $this->normalizeStringList(
                     $task['acceptance_criteria'],
                 ),
@@ -372,7 +511,7 @@ class ProjectManagerPlanner
     /**
      * Reject missing or extra structured-output keys so persistence receives only the published contract.
      *
-     * @param  array<string, mixed>  $value
+     * @param  array<array-key, mixed>  $value
      * @param  list<string>  $expectedKeys
      */
     private function assertExactKeys(
