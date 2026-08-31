@@ -159,26 +159,44 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
      */
     private function completeTask(Task $task, array $completion, AgentExecutionRunner $runner): void
     {
-        $pullRequest = null;
-
         if (filled($completion['commit_sha'])) {
-            $pullRequest = $runner->integrateReportedCommit($task, $completion['commit_sha'], $completion['summary']);
-        }
+            $result = $runner->integrateReportedCommit($task, $completion['commit_sha'], $completion['summary']);
 
-        $update = [
-            'status' => 'completed',
-            'last_handoff' => null,
-            'blocked_reason' => null,
-        ];
+            if ($result !== null && ! $result['integrated']) {
+                Task::query()->whereKey($task->getKey())
+                    ->where('status', 'running')
+                    ->update([
+                        'status' => 'waiting',
+                        'blocked_reason' => null,
+                        'last_handoff' => [
+                            'to_role' => 'coder',
+                            'note' => "CI checks failed before a pull request could be opened:\n\n".Str::limit($result['ci_output'], 4000, ''),
+                        ],
+                    ]);
 
-        if ($pullRequest !== null) {
-            $update['commit_sha'] = $pullRequest['commit_sha'];
-            $update['pull_request_url'] = $pullRequest['pull_request_url'];
+                return;
+            }
+
+            Task::query()->whereKey($task->getKey())
+                ->where('status', 'running')
+                ->update([
+                    'status' => 'completed',
+                    'last_handoff' => null,
+                    'blocked_reason' => null,
+                    'commit_sha' => $result['commit_sha'],
+                    'pull_request_url' => $result['pull_request_url'],
+                ]);
+
+            return;
         }
 
         Task::query()->whereKey($task->getKey())
             ->where('status', 'running')
-            ->update($update);
+            ->update([
+                'status' => 'completed',
+                'last_handoff' => null,
+                'blocked_reason' => null,
+            ]);
     }
 
     private function freshSubject(): Task|WorkRequest

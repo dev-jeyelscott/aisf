@@ -148,6 +148,7 @@ test('a Coder completion with a reported commit SHA is verified, pushed, and ope
     ]));
 
     feature09FakeRemoteGit([
+        'composer ci:check' => fn () => Process::result(exitCode: 0),
         'git push' => fn () => Process::result(exitCode: 0),
         'gh pr create' => fn () => Process::result(output: "https://github.com/example/aisf/pull/42\n"),
     ]);
@@ -183,6 +184,7 @@ test('a pull request is reused when one already exists for the Task branch', fun
     ]));
 
     feature09FakeRemoteGit([
+        'composer ci:check' => fn () => Process::result(exitCode: 0),
         'git push' => fn () => Process::result(exitCode: 0),
         'gh pr create' => fn () => Process::result(exitCode: 1, errorOutput: 'a pull request for branch already exists'),
         'gh pr view' => fn () => Process::result(output: "https://github.com/example/aisf/pull/7\n"),
@@ -191,6 +193,42 @@ test('a pull request is reused when one already exists for the Task branch', fun
     app()->call([new ProcessAgentExecution($task), 'handle']);
 
     expect($task->refresh()->pull_request_url)->toBe('https://github.com/example/aisf/pull/7');
+});
+
+test('a failing CI check hands the Task back to the Coder instead of opening a pull request', function () {
+    [, , $task] = feature09TaskFixture();
+
+    app(TaskWorktreeManager::class)->ensureWorktree($task);
+    $task->refresh();
+    $worktreePath = (string) $task->worktree_path;
+
+    File::put($worktreePath.'/README.md', "# MiseLedger\n");
+    Process::path($worktreePath)->run(['git', 'add', 'README.md'])->throw();
+    Process::path($worktreePath)->run([
+        'git', '-c', 'user.name=AISF Tests', '-c', 'user.email=aisf-tests@example.test',
+        'commit', '-m', 'docs: add readme',
+    ])->throw();
+    $commitSha = trim(Process::path($worktreePath)->run(['git', 'rev-parse', 'HEAD'])->output());
+
+    feature09FakeHarness(feature09Completion([
+        'status' => 'completed',
+        'summary' => 'Added and committed the README.',
+        'commit_sha' => $commitSha,
+    ]));
+
+    feature09FakeRemoteGit([
+        'composer ci:check' => fn () => Process::result(exitCode: 1, errorOutput: 'Pint found 3 style violations.'),
+    ]);
+
+    app()->call([new ProcessAgentExecution($task), 'handle']);
+
+    $task->refresh();
+
+    expect($task->status)->toBe('waiting')
+        ->and($task->last_handoff['to_role'])->toBe('coder')
+        ->and($task->last_handoff['note'])->toContain('Pint found 3 style violations.')
+        ->and($task->commit_sha)->toBeNull()
+        ->and($task->pull_request_url)->toBeNull();
 });
 
 test('a Coder hand-off to QA moves the Task to waiting and the next execution invokes the QA Agent', function () {

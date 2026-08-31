@@ -54,7 +54,7 @@ class AgentExecutionRunner
         }
 
         $session = $this->sessionManager->forSubject($agent, $subject);
-        [$repositoryPath, $writable] = $this->executionTarget($subject, $role);
+        [$repositoryPath, $writable] = $this->executionTarget($subject);
         $prompt = $this->buildPrompt($subject, $agent, $role, $repositoryPath, $operatorInstruction);
 
         $run = $this->sessionManager->startRun($session, $role, [
@@ -99,9 +99,10 @@ class AgentExecutionRunner
     }
 
     /**
-     * Verify an Agent-reported commit and open a pull request for it, or return null if none was reported.
+     * Verify an Agent-reported commit, require the Project's CI check to pass, and only then open a pull
+     * request. If CI fails, hand the Task back to the Coder with the failure output instead of opening a PR.
      *
-     * @return array{commit_sha: string, pull_request_url: string}|null
+     * @return array{integrated: true, commit_sha: string, pull_request_url: string}|array{integrated: false, ci_output: string}|null
      */
     public function integrateReportedCommit(Task $task, ?string $commitSha, string $summary): ?array
     {
@@ -110,8 +111,15 @@ class AgentExecutionRunner
         }
 
         $verifiedSha = $this->worktreeManager->verifyCommitExists($task, $commitSha);
+        $ci = $this->worktreeManager->runCiCheck($task);
 
-        return $this->worktreeManager->pushAndOpenPullRequest($task, $verifiedSha, $task->title, $summary);
+        if (! $ci['passed']) {
+            return ['integrated' => false, 'ci_output' => $ci['output']];
+        }
+
+        $pullRequest = $this->worktreeManager->pushAndOpenPullRequest($task, $verifiedSha, $task->title, $summary);
+
+        return ['integrated' => true, ...$pullRequest];
     }
 
     /**
@@ -240,7 +248,7 @@ class AgentExecutionRunner
     /**
      * @return array{0: string, 1: bool} repository path and whether the Agent may write to it
      */
-    private function executionTarget(Task|WorkRequest $subject, string $role): array
+    private function executionTarget(Task|WorkRequest $subject): array
     {
         if ($subject instanceof WorkRequest) {
             $project = $this->projectFor($subject);
@@ -298,12 +306,12 @@ class AgentExecutionRunner
             $sections[] = "OPERATOR INSTRUCTION\n{$operatorInstruction}";
         }
 
-        $sections[] = $this->contractSection($subject);
+        $sections[] = $this->contractSection($subject, $role);
 
         return implode("\n\n", $sections);
     }
 
-    private function contractSection(Task|WorkRequest $subject): string
+    private function contractSection(Task|WorkRequest $subject, string $role): string
     {
         if ($subject instanceof WorkRequest) {
             return <<<'PROMPT'
@@ -315,12 +323,17 @@ Decide for yourself what fields each Task needs — a documentation-only Task ne
 PROMPT;
         }
 
-        return <<<'PROMPT'
+        $ciInstruction = $role === 'coder'
+            ? 'Before handing off to Quality Assurance or setting "commit_sha", run `composer ci:check` yourself and confirm it passes — do not hand off or report a commit while it is failing.'
+            : 'Before approving (handing off with "to_role": null or completing) or reporting a commit, run `composer ci:check` yourself and confirm it passes — hand back to the Coder with the failure details in "handoff.note" if it is failing.';
+
+        return <<<PROMPT
 RESPONSE CONTRACT
 You have write access to this isolated Task worktree only. Inspect, edit, run commands, test, and commit as you judge appropriate — there is no fixed process you must follow.
 Return only one JSON object matching the supplied schema.
 Set "status" to "completed" once you consider the assigned work fully done (or judge no further action is needed), "waiting" if you are handing off to another role for another turn, or "failed" if you cannot complete the work.
 If you are handing off, set "handoff" to {"to_role": "coder"|"quality_assurance_specialist", "note": "..."} describing what the next turn should do. If you committed, set "commit_sha" to the exact commit SHA you created; otherwise leave it null. Only commit when you judge the work is ready to be committed — there is no fixed timing requirement.
+{$ciInstruction} Laravel independently re-runs `composer ci:check` before opening any pull request and will hand the Task back to the Coder with the output if it fails, regardless of what you reported.
 PROMPT;
     }
 }

@@ -126,6 +126,29 @@ class TaskWorktreeManager
     }
 
     /**
+     * Run the Project's CI check script inside the Task worktree so a failing pull request is never opened.
+     *
+     * @return array{passed: bool, output: string}
+     */
+    public function runCiCheck(Task $task): array
+    {
+        $worktreePath = (string) $task->worktree_path;
+
+        if ($worktreePath === '' || ! is_dir($worktreePath)) {
+            throw new UnexpectedValueException('The Task worktree must exist before CI checks can run.');
+        }
+
+        $result = $this->run($worktreePath, ['composer', 'ci:check'], timeout: 900, idleTimeout: 900);
+
+        return [
+            'passed' => $result !== null && $result->successful(),
+            'output' => $result !== null
+                ? trim($result->output()."\n".$result->errorOutput())
+                : 'Unable to run the Project CI check script.',
+        ];
+    }
+
+    /**
      * Push the Task branch to the Project's Git remote and open (or reuse) a pull request for human review,
      * instead of merging directly. The worktree and branch are left in place until the PR is merged elsewhere.
      *
@@ -186,17 +209,17 @@ class TaskWorktreeManager
     }
 
     /**
-     * Run a bounded Git worktree command without allowing optional locks.
+     * Run a bounded worktree command without allowing optional Git locks.
      *
      * @param  array<int, string>  $command
      */
-    private function run(string $path, array $command): ?ProcessResult
+    private function run(string $path, array $command, int $timeout = 30, int $idleTimeout = 30): ?ProcessResult
     {
         try {
             return Process::path($path)
                 ->env(['GIT_OPTIONAL_LOCKS' => '0'])
-                ->timeout(30)
-                ->idleTimeout(30)
+                ->timeout($timeout)
+                ->idleTimeout($idleTimeout)
                 ->run($command);
         } catch (Throwable) {
             return null;
