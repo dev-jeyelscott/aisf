@@ -294,6 +294,85 @@ it('retains Claude non-persistent fallback when the installed CLI does not adver
         ]);
 });
 
+it('grants Codex workspace-write access only for writable Coder execution', function () {
+    $execution = null;
+
+    Process::fake(function (PendingProcess $process) use (&$execution) {
+        if ($process->command === ['codex', 'exec', '--help']) {
+            return Process::result(output: 'Usage: codex exec [OPTIONS]');
+        }
+
+        $execution = $process->command;
+
+        return Process::result(output: '{"summary":"implemented"}');
+    });
+
+    Process::preventStrayProcesses();
+
+    $agent = new ProjectAgent(['harness' => 'codex']);
+
+    $result = app(AgentHarness::class)->start(
+        $agent,
+        sys_get_temp_dir(),
+        'Implement the Task.',
+        writable: true,
+    );
+
+    expect($result->successful)->toBeTrue()
+        ->and($execution)->toBe([
+            'codex',
+            'exec',
+            '--ephemeral',
+            '--sandbox',
+            'workspace-write',
+            '--color',
+            'never',
+            '-',
+        ]);
+});
+
+it('grants Claude accept-edits access only for writable Coder execution', function () {
+    $execution = null;
+
+    Process::fake(function (PendingProcess $process) use (&$execution) {
+        if ($process->command === ['claude', '--help']) {
+            return Process::result(output: 'Usage: claude --output-format');
+        }
+
+        $execution = $process->command;
+
+        return Process::result(output: json_encode([
+            'type' => 'result',
+            'subtype' => 'success',
+            'session_id' => 'writable-session',
+            'result' => 'implemented',
+        ], JSON_THROW_ON_ERROR));
+    });
+
+    Process::preventStrayProcesses();
+
+    $agent = new ProjectAgent(['harness' => 'claude']);
+
+    $result = app(AgentHarness::class)->start(
+        $agent,
+        sys_get_temp_dir(),
+        'Implement the Task.',
+        writable: true,
+    );
+
+    expect($result->successful)->toBeTrue()
+        ->and($result->output)->toBe('implemented')
+        ->and($execution)->toBe([
+            'claude',
+            '--print',
+            '--output-format',
+            'json',
+            '--permission-mode',
+            'acceptEdits',
+            '--no-session-persistence',
+        ]);
+});
+
 it('returns process failure metadata without exposing raw provider output', function () {
     Process::fake(function (PendingProcess $process) {
         if ($process->command === ['codex', 'exec', '--help']) {

@@ -46,6 +46,7 @@ class Feature03FakeAgentHarness extends AgentHarness
         string $repositoryPath,
         string $prompt,
         ?array $schema = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         $this->executions++;
         $this->prompt = $prompt;
@@ -74,12 +75,14 @@ class Feature03FakeAgentHarness extends AgentHarness
         string $providerSessionId,
         string $prompt,
         ?array $schema = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         return $this->start(
             $agent,
             $repositoryPath,
             $prompt,
             $schema,
+            $writable,
         );
     }
 }

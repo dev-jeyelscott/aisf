@@ -179,6 +179,11 @@ VERIFICATION COMMANDS
 
 BROWSER TEST STEPS
 {$this->formatNumberedList($task->browser_steps)}
+
+CODER CONTRACT
+Inspect, edit, and run commands only inside the supplied Task worktree. Do not commit. Quality Assurance has not approved this work yet, and any commit before approval will block the Task. Leave the implementation as uncommitted working changes when you finish.
+
+Return only the exact structured completion summary required by the supplied JSON schema. Do not add Markdown fences, commentary, or extra keys.
 PROMPT;
 
         return [
@@ -195,6 +200,7 @@ PROMPT;
                 ['type' => 'acceptance_criteria', 'label' => 'Task acceptance criteria'],
                 ['type' => 'verification_commands', 'label' => 'Task verification commands'],
                 ['type' => 'browser_steps', 'label' => 'Task browser test steps'],
+                ['type' => 'coder_contract', 'label' => 'No-commit-before-QA Coder contract'],
             ],
         ];
     }

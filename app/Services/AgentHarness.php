@@ -44,10 +44,11 @@ class AgentHarness
         string $repositoryPath,
         string $prompt,
         ?array $schema = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         return match ($agent->harness) {
-            'codex' => $this->executeCodex($agent, $repositoryPath, $prompt, $schema),
-            'claude' => $this->executeClaude($agent, $repositoryPath, $prompt, $schema),
+            'codex' => $this->executeCodex($agent, $repositoryPath, $prompt, $schema, writable: $writable),
+            'claude' => $this->executeClaude($agent, $repositoryPath, $prompt, $schema, writable: $writable),
             default => throw new UnexpectedValueException('The Agent harness must be Codex or Claude.'),
         };
     }
@@ -63,6 +64,7 @@ class AgentHarness
         string $providerSessionId,
         string $prompt,
         ?array $schema = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         $providerSessionId = trim($providerSessionId);
 
@@ -71,7 +73,7 @@ class AgentHarness
         }
 
         if (! $this->canResume($agent)) {
-            return $this->start($agent, $repositoryPath, $prompt, $schema);
+            return $this->start($agent, $repositoryPath, $prompt, $schema, $writable);
         }
 
         return match ($agent->harness) {
@@ -81,6 +83,7 @@ class AgentHarness
                 $prompt,
                 $schema,
                 $providerSessionId,
+                $writable,
             ),
             'claude' => $this->executeClaude(
                 $agent,
@@ -88,6 +91,7 @@ class AgentHarness
                 $prompt,
                 $schema,
                 $providerSessionId,
+                $writable,
             ),
             default => throw new UnexpectedValueException('The Agent harness must be Codex or Claude.'),
         };
@@ -125,7 +129,7 @@ class AgentHarness
     }
 
     /**
-     * Execute Codex with read-only repository access and provider continuity only when the installed CLI proves support.
+     * Execute Codex with read-only repository access by default, or workspace-write access for Coder implementation runs, with provider continuity only when the installed CLI proves support.
      *
      * @param  array<string, mixed>|null  $schema
      */
@@ -135,6 +139,7 @@ class AgentHarness
         string $prompt,
         ?array $schema,
         ?string $providerSessionId = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         $schemaPath = null;
 
@@ -164,7 +169,7 @@ class AgentHarness
             }
 
             $command[] = '--sandbox';
-            $command[] = 'read-only';
+            $command[] = $writable ? 'workspace-write' : 'read-only';
             $command[] = '--color';
             $command[] = 'never';
 
@@ -317,7 +322,7 @@ class AgentHarness
     }
 
     /**
-     * Execute Claude in read-only plan mode and enable local session persistence only when stable resume support is advertised.
+     * Execute Claude in read-only plan mode by default, or accept-edits mode for Coder implementation runs, enabling local session persistence only when stable resume support is advertised.
      *
      * @param  array<string, mixed>|null  $schema
      */
@@ -327,6 +332,7 @@ class AgentHarness
         string $prompt,
         ?array $schema,
         ?string $providerSessionId = null,
+        bool $writable = false,
     ): AgentHarnessResult {
         $supportsResume = $this->canResume($agent);
         $command = [
@@ -342,7 +348,7 @@ class AgentHarness
         }
 
         $command[] = '--permission-mode';
-        $command[] = 'plan';
+        $command[] = $writable ? 'acceptEdits' : 'plan';
 
         if ($providerSessionId !== null && $supportsResume) {
             $command[] = '--resume';

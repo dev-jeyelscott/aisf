@@ -10,6 +10,7 @@ import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
+import { start as startTask } from '@/routes/projects/tasks';
 import { store as storeWorkRequest } from '@/routes/projects/work-requests';
 
 type Project = {
@@ -66,6 +67,13 @@ type Task = {
     acceptance_criteria: string[];
     verification_commands: string[];
     browser_steps: string[];
+    status: string;
+    base_branch: string | null;
+    base_sha: string | null;
+    branch_name: string | null;
+    worktree_path: string | null;
+    blocked_reason: string | null;
+    changed_files: string[];
     agent_sessions: AgentSession[];
 };
 
@@ -479,14 +487,110 @@ export default function ProjectWorkspace({
                                                         {task.title}
                                                     </h4>
                                                 </div>
-                                                {dependency && (
-                                                    <span className="text-muted-foreground text-xs">
-                                                        Depends on Task{' '}
-                                                        {dependency.position}:{' '}
-                                                        {dependency.title}
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {dependency && (
+                                                        <span className="text-muted-foreground text-xs">
+                                                            Depends on Task{' '}
+                                                            {
+                                                                dependency.position
+                                                            }
+                                                            : {dependency.title}
+                                                        </span>
+                                                    )}
+                                                    <span className="border-border bg-muted rounded-full border px-2.5 py-1 text-xs font-medium capitalize">
+                                                        {humanize(task.status)}
                                                     </span>
-                                                )}
+                                                    {task.status ===
+                                                        'queued' && (
+                                                        <Form
+                                                            {...startTask.form([
+                                                                project.id,
+                                                                task.id,
+                                                            ])}
+                                                        >
+                                                            {({
+                                                                processing,
+                                                            }) => (
+                                                                <Button
+                                                                    type="submit"
+                                                                    size="sm"
+                                                                    disabled={
+                                                                        processing
+                                                                    }
+                                                                >
+                                                                    Start Task
+                                                                </Button>
+                                                            )}
+                                                        </Form>
+                                                    )}
+                                                </div>
                                             </div>
+
+                                            {task.blocked_reason && (
+                                                <div className="border-destructive/30 bg-destructive/5 mt-4 rounded-md border p-3">
+                                                    <h5 className="text-destructive text-sm font-medium">
+                                                        Task blocked
+                                                    </h5>
+                                                    <p className="text-muted-foreground mt-1 text-sm">
+                                                        {task.blocked_reason}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {task.worktree_path && (
+                                                <div className="border-border bg-muted/20 mt-4 rounded-md border p-3">
+                                                    <h5 className="text-sm font-medium">
+                                                        Task worktree
+                                                    </h5>
+                                                    <dl className="text-muted-foreground mt-2 grid gap-2 text-xs sm:grid-cols-3">
+                                                        <div>
+                                                            <dt>Branch</dt>
+                                                            <dd className="text-foreground mt-0.5 font-mono">
+                                                                {
+                                                                    task.branch_name
+                                                                }
+                                                            </dd>
+                                                        </div>
+                                                        <div>
+                                                            <dt>Base SHA</dt>
+                                                            <dd className="text-foreground mt-0.5 font-mono break-all">
+                                                                {task.base_sha}
+                                                            </dd>
+                                                        </div>
+                                                        <div>
+                                                            <dt>
+                                                                Worktree path
+                                                            </dt>
+                                                            <dd className="text-foreground mt-0.5 font-mono break-all">
+                                                                {
+                                                                    task.worktree_path
+                                                                }
+                                                            </dd>
+                                                        </div>
+                                                    </dl>
+                                                    {task.changed_files.length >
+                                                        0 && (
+                                                        <div className="mt-3">
+                                                            <h6 className="text-xs font-medium">
+                                                                Changed files
+                                                            </h6>
+                                                            <ul className="text-muted-foreground mt-1 list-disc space-y-1 pl-5 text-xs">
+                                                                {task.changed_files.map(
+                                                                    (file) => (
+                                                                        <li
+                                                                            key={`${task.id}-changed-${file}`}
+                                                                        >
+                                                                            {
+                                                                                file
+                                                                            }
+                                                                        </li>
+                                                                    ),
+                                                                )}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
 
                                             <div className="mt-4 grid gap-4 text-sm">
                                                 <div>

@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProjectAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectSkillController;
+use App\Http\Controllers\TaskController;
 use App\Http\Controllers\WorkRequestController;
 use Illuminate\Support\Facades\Route;
 
@@ -12,6 +13,7 @@ Route::resource('projects', ProjectController::class)->except('destroy');
 Route::resource('projects.agents', ProjectAgentController::class)->only(['index', 'edit', 'update']);
 Route::resource('projects.skills', ProjectSkillController::class)->except(['show', 'create']);
 Route::post('projects/{project}/work-requests', [WorkRequestController::class, 'store'])->name('projects.work-requests.store');
+Route::post('projects/{project}/tasks/{task}/start', [TaskController::class, 'start'])->name('projects.tasks.start');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');

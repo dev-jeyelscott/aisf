@@ -11,6 +11,7 @@ use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\ProjectAgentProvisioner;
 use App\Services\RepositoryInspector;
+use App\Services\TaskWorktreeManager;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -57,6 +58,7 @@ class ProjectController extends Controller
         Project $project,
         RepositoryInspector $repositoryInspector,
         ProjectAgentProvisioner $provisioner,
+        TaskWorktreeManager $worktreeManager,
     ): Response {
         $provisioner->ensureFor($project);
 
@@ -72,6 +74,7 @@ class ProjectController extends Controller
             ->map(
                 fn (WorkRequest $workRequest): array => $this->workRequestPayload(
                     $workRequest,
+                    $worktreeManager,
                 ),
             )
             ->values();
@@ -124,8 +127,10 @@ class ProjectController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function workRequestPayload(WorkRequest $workRequest): array
-    {
+    private function workRequestPayload(
+        WorkRequest $workRequest,
+        TaskWorktreeManager $worktreeManager,
+    ): array {
         return [
             ...$workRequest->only([
                 'id',
@@ -146,7 +151,7 @@ class ProjectController extends Controller
                 ->all(),
             'tasks' => $workRequest->tasks
                 ->map(
-                    fn (Task $task): array => $this->taskPayload($task),
+                    fn (Task $task): array => $this->taskPayload($task, $worktreeManager),
                 )
                 ->values()
                 ->all(),
@@ -154,11 +159,11 @@ class ProjectController extends Controller
     }
 
     /**
-     * Serialize one Task together with recent Agent session activity.
+     * Serialize one Task together with worktree lifecycle metadata and recent Agent session activity.
      *
      * @return array<string, mixed>
      */
-    private function taskPayload(Task $task): array
+    private function taskPayload(Task $task, TaskWorktreeManager $worktreeManager): array
     {
         return [
             ...$task->only([
@@ -171,7 +176,16 @@ class ProjectController extends Controller
                 'acceptance_criteria',
                 'verification_commands',
                 'browser_steps',
+                'status',
+                'base_branch',
+                'base_sha',
+                'branch_name',
+                'worktree_path',
+                'blocked_reason',
             ]),
+            'changed_files' => filled($task->worktree_path)
+                ? $worktreeManager->changedFiles($task)
+                : [],
             'agent_sessions' => $task->agentSessions
                 ->sortByDesc('updated_at')
                 ->map(
