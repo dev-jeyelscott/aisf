@@ -6,6 +6,7 @@ use App\Models\Task;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Str;
 use JsonException;
 use RuntimeException;
 use Throwable;
@@ -69,12 +70,51 @@ class TaskWorktreeManager
             throw new RuntimeException('Unable to create the isolated Task Git worktree.');
         }
 
+        $this->seedInstalledDependencies($repositoryPath, $worktreePath);
+
         $task->update([
             'base_branch' => $status['branch'],
             'base_sha' => $headSha,
             'branch_name' => $branchName,
             'worktree_path' => $worktreePath,
         ]);
+    }
+
+    /**
+     * Copy the Project's already-installed, gitignored local-environment files into a fresh Task
+     * worktree. `git worktree add` only checks out tracked files, so without this an Agent's CI
+     * check (composer/npm scripts, `artisan` itself) silently falls back to whatever global tooling
+     * happens to be on PATH instead of the Project's pinned versions, fails outright with vendor/
+     * missing, or can't boot at all without `.env`/the local database. A real copy (not a symlink)
+     * keeps the Agent's `composer update`/`npm install`/migration writes isolated to the worktree
+     * instead of mutating the Project's real checkout.
+     */
+    private function seedInstalledDependencies(string $repositoryPath, string $worktreePath): void
+    {
+        foreach (['vendor', 'node_modules'] as $directory) {
+            $source = "{$repositoryPath}/{$directory}";
+
+            if (! is_dir($source)) {
+                continue;
+            }
+
+            $this->run($repositoryPath, ['cp', '-a', $source, "{$worktreePath}/{$directory}"], timeout: 300, idleTimeout: 300);
+        }
+
+        $files = [
+            "{$repositoryPath}/.env",
+            ...File::glob("{$repositoryPath}/database/*.sqlite"),
+        ];
+
+        foreach ($files as $source) {
+            if (! is_file($source)) {
+                continue;
+            }
+
+            $destination = $worktreePath.Str::after($source, $repositoryPath);
+            File::ensureDirectoryExists(dirname($destination));
+            File::copy($source, $destination);
+        }
     }
 
     /**
