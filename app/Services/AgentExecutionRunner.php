@@ -17,7 +17,6 @@ class AgentExecutionRunner
     public function __construct(
         private readonly AgentHarness $harness,
         private readonly AgentSessionManager $sessionManager,
-        private readonly TaskWorktreeManager $worktreeManager,
         private readonly AgentPromptComposer $promptComposer,
         private readonly TaskContextBuilder $taskContextBuilder,
     ) {}
@@ -134,25 +133,10 @@ class AgentExecutionRunner
     /** @return array{0: string, 1: bool} */
     private function executionTarget(Task|WorkRequest $subject): array
     {
-        if ($subject instanceof WorkRequest) {
-            return [$this->projectFor($subject)->path, false];
-        }
+        $writable = $subject instanceof Task
+            && ($subject->last_handoff['to_role'] ?? null) === 'coder';
 
-        if (($subject->last_handoff['to_role'] ?? null) === 'qa') {
-            $this->worktreeManager->ensureWorktree($subject);
-            $subject->refresh();
-
-            return [(string) $subject->worktree_path, false];
-        }
-
-        if (($subject->last_handoff['to_role'] ?? null) !== 'coder') {
-            return [(string) $this->projectFor($subject)->path, false];
-        }
-
-        $this->worktreeManager->ensureWorktree($subject);
-        $subject->refresh();
-
-        return [(string) $subject->worktree_path, true];
+        return [(string) $this->projectFor($subject)->path, $writable];
     }
 
     private function contractSection(Task|WorkRequest $subject, string $role, string $mode): string

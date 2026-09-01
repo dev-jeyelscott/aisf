@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
+use App\Services\AgentExecutionRunner;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
@@ -152,6 +153,21 @@ test('a Task cannot execute without a durable PM handoff', function () {
 
     expect(fn () => app()->call([new ProcessAgentExecution($task), 'handle']))
         ->toThrow(UnexpectedValueException::class);
+});
+
+test('Agents execute from the Project directory without creating a Task worktree', function () {
+    [$project, , $task] = feature09TaskFixture();
+    $executionPath = null;
+    $harness = feature09FakeHarness('Implemented.', function (string $path) use (&$executionPath): void {
+        $executionPath = $path;
+    });
+
+    $execution = app(AgentExecutionRunner::class)->run($task);
+
+    expect($executionPath)->toBe($project->path)
+        ->and($harness->writable)->toBeTrue()
+        ->and($task->worktree_path)->toBeNull()
+        ->and($execution->harnessResult->successful)->toBeTrue();
 });
 
 test('ensureWorktree recovers from a stale branch and worktree left by a previous failed attempt', function () {
