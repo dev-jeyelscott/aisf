@@ -4,7 +4,6 @@ import {
     AlertCircle,
     Ban,
     CheckCircle2,
-    ChevronDown,
     CircleDashed,
     Clock3,
     ExternalLink,
@@ -32,11 +31,6 @@ import {
     CardHeader,
 } from '@/components/ui/card';
 import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import {
     Dialog,
     DialogClose,
     DialogContent,
@@ -57,10 +51,7 @@ import {
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
 import { retry as retryTask, run as runTask } from '@/routes/projects/tasks';
-import {
-    retry as retryWorkRequest,
-    store as storeWorkRequest,
-} from '@/routes/projects/work-requests';
+import { store as storeWorkRequest } from '@/routes/projects/work-requests';
 
 type WorkflowStatus =
     | 'pending'
@@ -270,7 +261,11 @@ function serializeFindings(findings: unknown): string {
         return findings;
     }
 
-    return JSON.stringify(findings, null, 2) ?? String(findings);
+    if (typeof findings === 'number' || typeof findings === 'boolean') {
+        return String(findings);
+    }
+
+    return JSON.stringify(findings, null, 2) ?? 'No findings recorded.';
 }
 
 /**
@@ -1615,196 +1610,6 @@ function TasksSection({
         </section>
     );
 }
-
-/**
- * Render one compact WorkRequest row with PM planning information available
- * through Collapsible progressive disclosure.
- */
-function WorkRequestCollapsible({
-    project,
-    request,
-}: {
-    project: Project;
-    request: WorkRequest;
-}) {
-    return (
-        <Collapsible className="border-border bg-card rounded-xl border">
-            <CollapsibleTrigger asChild>
-                <button
-                    type="button"
-                    className="group focus-visible:ring-ring flex w-full items-start justify-between gap-4 rounded-xl p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                >
-                    <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-semibold">
-                                Work Request #{request.id}
-                            </span>
-                            <StatusBadge status={request.status} />
-
-                            {request.outcome && (
-                                <Badge variant="outline">
-                                    {humanize(request.outcome)}
-                                </Badge>
-                            )}
-
-                            {request.source_type !== 'manual' &&
-                                (request.source_url ? (
-                                    <Badge asChild variant="outline">
-                                        <a
-                                            href={request.source_url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            onClick={(event) =>
-                                                event.stopPropagation()
-                                            }
-                                        >
-                                            {request.source_type}
-                                            <ExternalLink aria-hidden="true" />
-                                        </a>
-                                    </Badge>
-                                ) : (
-                                    <Badge variant="outline">
-                                        {request.source_type}
-                                    </Badge>
-                                ))}
-                        </div>
-
-                        <p className="text-muted-foreground mt-2 line-clamp-2 text-sm">
-                            {request.summary || request.prompt}
-                        </p>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-3">
-                        <span className="text-muted-foreground text-xs">
-                            {request.tasks.length} Task
-                            {request.tasks.length === 1 ? '' : 's'}
-                        </span>
-                        <ChevronDown className="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-180" />
-                    </div>
-                </button>
-            </CollapsibleTrigger>
-
-            <CollapsibleContent>
-                <div className="border-border grid gap-4 border-t p-4">
-                    <div>
-                        <p className="text-muted-foreground text-xs">
-                            Original request
-                        </p>
-                        <p className="mt-1 text-sm whitespace-pre-wrap">
-                            {request.prompt}
-                        </p>
-                    </div>
-
-                    {request.summary && (
-                        <div>
-                            <p className="text-muted-foreground text-xs">
-                                PM summary
-                            </p>
-                            <p className="mt-1 text-sm whitespace-pre-wrap">
-                                {request.summary}
-                            </p>
-                        </div>
-                    )}
-
-                    <dl className="grid gap-3 sm:grid-cols-3">
-                        <MetadataField label="Source">
-                            <span className="capitalize">
-                                {humanize(request.source_type)}
-                            </span>
-                        </MetadataField>
-                        <MetadataField label="Protocol recoveries">
-                            {request.protocol_recovery_count}
-                        </MetadataField>
-                        <MetadataField label="Tasks">
-                            {request.tasks.length}
-                        </MetadataField>
-                    </dl>
-
-                    {request.last_handoff && (
-                        <div className="bg-muted/40 rounded-lg p-3">
-                            <p className="text-sm font-medium">
-                                Latest PM handoff
-                                {request.last_handoff.to_role
-                                    ? ` to ${humanize(request.last_handoff.to_role)}`
-                                    : ''}
-                            </p>
-                            {request.last_handoff.note && (
-                                <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
-                                    {request.last_handoff.note}
-                                </p>
-                            )}
-                        </div>
-                    )}
-
-                    {request.evidence && request.evidence.length > 0 && (
-                        <div>
-                            <p className="text-muted-foreground text-xs">
-                                Repository evidence
-                            </p>
-                            <ul className="mt-2 grid gap-1 text-sm">
-                                {request.evidence.map((evidence, index) => (
-                                    <li
-                                        key={`${request.id}-evidence-${index}`}
-                                        className="bg-muted/40 rounded-md px-3 py-2"
-                                    >
-                                        {evidence}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-
-                    {request.status === 'failed' && (
-                        <div className="border-destructive/30 bg-destructive/5 rounded-lg border p-3">
-                            <p className="text-destructive text-sm font-medium">
-                                Work request failed
-                            </p>
-                            <p className="text-muted-foreground mt-1 text-sm">
-                                {request.failure_reason ||
-                                    'No failure reason recorded.'}
-                            </p>
-
-                            <Form
-                                {...retryWorkRequest.form([
-                                    project.id,
-                                    request.id,
-                                ])}
-                                className="mt-3"
-                            >
-                                {({ processing }) => (
-                                    <Button
-                                        type="submit"
-                                        size="sm"
-                                        variant="outline"
-                                        disabled={processing}
-                                    >
-                                        {processing ? (
-                                            <Spinner />
-                                        ) : (
-                                            <RotateCcw aria-hidden="true" />
-                                        )}
-                                        Retry
-                                    </Button>
-                                )}
-                            </Form>
-                        </div>
-                    )}
-
-                    <div>
-                        <p className="mb-3 text-sm font-medium">
-                            Project Manager activity
-                        </p>
-                        <AgentSessionActivity
-                            sessions={request.agent_sessions}
-                            emptyLabel="No Project Manager session has been recorded for this WorkRequest yet."
-                        />
-                    </div>
-                </div>
-            </CollapsibleContent>
-        </Collapsible>
-    );
-}
-
 /**
  * Render the Project control surface with Tasks prioritized for scanning and
  * durable diagnostic information progressively disclosed on demand.
@@ -1825,16 +1630,6 @@ export default function ProjectWorkspace({
             task,
             request,
         })),
-    );
-
-    const allSessions = workRequests.flatMap((request) => [
-        ...request.agent_sessions,
-        ...request.tasks.flatMap((task) => task.agent_sessions),
-    ]);
-
-    const visibleRunCount = allSessions.reduce(
-        (total, session) => total + session.runs.length,
-        0,
     );
 
     return (
