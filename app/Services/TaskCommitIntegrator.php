@@ -24,23 +24,36 @@ class TaskCommitIntegrator
         private readonly AgentExecutionRunner $runner,
         private readonly CandidateAcceptanceGate $candidateAcceptanceGate,
         private readonly RepairCycleGuard $repairCycleGuard,
+        private readonly AgentRunActionRecorder $actionRecorder,
     ) {}
 
     /**
      * Verify and integrate the Coder reported candidate only after current QA approval.
      */
-    public function integrate(Task $task, AgentRun $coderRun, string $commitSha, string $summary): void
-    {
+    public function integrate(
+        Task $task,
+        AgentRun $coderRun,
+        string $commitSha,
+        string $summary,
+    ): void {
         $task = $task->fresh();
 
         if (! $this->candidateAcceptanceGate->hasCurrentApproval($task)) {
-            throw new UnexpectedValueException('A Coder may not report a commit before the current candidate has QA approval.');
+            throw new UnexpectedValueException(
+                'A Coder may not report a commit before the current candidate has QA approval.',
+            );
         }
 
-        $result = $this->runner->integrateReportedCommit($task, $commitSha, $summary);
+        $result = $this->runner->integrateReportedCommit(
+            $task,
+            $commitSha,
+            $summary,
+        );
 
         if ($result === null) {
-            throw new UnexpectedValueException('A Coder may not report an empty commit SHA for finalization.');
+            throw new UnexpectedValueException(
+                'A Coder may not report an empty commit SHA for finalization.',
+            );
         }
 
         if ($result['integrated'] === true) {
@@ -57,10 +70,19 @@ class TaskCommitIntegrator
      *
      * @param  array{integrated: true, commit_sha: string, pull_request_url: string}  $result
      */
-    private function complete(Task $task, AgentRun $coderRun, array $result): void
-    {
-        DB::transaction(function () use ($task, $coderRun, $result): void {
-            $locked = Task::query()->lockForUpdate()->findOrFail($task->id);
+    private function complete(
+        Task $task,
+        AgentRun $coderRun,
+        array $result,
+    ): void {
+        DB::transaction(function () use (
+            $task,
+            $coderRun,
+            $result,
+        ): void {
+            $locked = Task::query()
+                ->lockForUpdate()
+                ->findOrFail($task->id);
 
             if ($locked->status !== 'running') {
                 return;
@@ -74,23 +96,33 @@ class TaskCommitIntegrator
                 'last_handoff' => null,
             ]);
 
-            $coderRun->actions()->create([
-                'action' => AgentRunAction::ACTION_CANDIDATE_FINALIZED,
-                'resource_type' => AgentRunAction::RESOURCE_TASK,
-                'resource_id' => $locked->id,
-            ]);
+            $this->actionRecorder->record(
+                $coderRun,
+                AgentRunAction::ACTION_CANDIDATE_FINALIZED,
+                $locked,
+            );
         }, attempts: 3);
     }
 
     /**
      * Persist a bounded CI repair outcome and attribute any created handoff to the Coder run.
      */
-    private function repair(Task $task, AgentRun $coderRun, string $ciOutput): void
-    {
+    private function repair(
+        Task $task,
+        AgentRun $coderRun,
+        string $ciOutput,
+    ): void {
         $limit = (int) config('aisf.max_repair_cycles');
 
-        DB::transaction(function () use ($task, $coderRun, $ciOutput, $limit): void {
-            $locked = Task::query()->lockForUpdate()->findOrFail($task->id);
+        DB::transaction(function () use (
+            $task,
+            $coderRun,
+            $ciOutput,
+            $limit,
+        ): void {
+            $locked = Task::query()
+                ->lockForUpdate()
+                ->findOrFail($task->id);
 
             if ($locked->status !== 'running') {
                 return;
@@ -119,11 +151,11 @@ class TaskCommitIntegrator
                 'dispatched_at' => now(),
             ]);
 
-            $coderRun->actions()->create([
-                'action' => AgentRunAction::ACTION_HANDOFF_CREATED,
-                'resource_type' => AgentRunAction::RESOURCE_TASK_HANDOFF,
-                'resource_id' => $handoff->id,
-            ]);
+            $this->actionRecorder->record(
+                $coderRun,
+                AgentRunAction::ACTION_HANDOFF_CREATED,
+                $handoff,
+            );
 
             $locked->update([
                 'status' => 'waiting',

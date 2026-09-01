@@ -16,6 +16,13 @@ use UnexpectedValueException;
 class AgentSessionManager
 {
     /**
+     * Initialize durable Agent session management with action recording.
+     */
+    public function __construct(
+        private readonly AgentRunActionRecorder $actionRecorder,
+    ) {}
+
+    /**
      * Find or race-safely create the one logical session for an Agent and Task or WorkRequest subject.
      */
     public function forSubject(
@@ -218,7 +225,13 @@ class AgentSessionManager
         }
 
         DB::transaction(
-            function () use ($run, $summary, $exitCode, $rawOutputReference, $executionMetadata): void {
+            function () use (
+                $run,
+                $summary,
+                $exitCode,
+                $rawOutputReference,
+                $executionMetadata,
+            ): void {
                 $lockedRun = AgentRun::query()
                     ->lockForUpdate()
                     ->findOrFail($run->getKey());
@@ -239,11 +252,11 @@ class AgentSessionManager
                     'finished_at' => now(),
                 ]);
 
-                $lockedRun->actions()->create([
-                    'action' => AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
-                    'resource_type' => AgentRunAction::RESOURCE_AGENT_RUN,
-                    'resource_id' => $lockedRun->id,
-                ]);
+                $this->actionRecorder->record(
+                    $lockedRun,
+                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                    $lockedRun,
+                );
             },
             attempts: 3,
         );
@@ -256,14 +269,28 @@ class AgentSessionManager
      *
      * @param  array<string, mixed>  $delegation
      */
-    public function recordDelegation(AgentRun $parent, array $delegation): AgentRun
-    {
-        $purpose = trim((string) ($delegation['purpose'] ?? 'Delegated engineering work'));
-        $status = in_array($delegation['status'] ?? null, ['succeeded', 'failed', 'running'], true)
+    public function recordDelegation(
+        AgentRun $parent,
+        array $delegation,
+    ): AgentRun {
+        $purpose = trim(
+            (string) (
+                $delegation['purpose']
+                ?? 'Delegated engineering work'
+            ),
+        );
+
+        $status = in_array(
+            $delegation['status'] ?? null,
+            ['succeeded', 'failed', 'running'],
+            true,
+        )
             ? $delegation['status']
             : 'succeeded';
 
-        $attempt = ((int) $parent->agentSession->runs()->max('attempt')) + 1;
+        $attempt = (
+            (int) $parent->agentSession->runs()->max('attempt')
+        ) + 1;
 
         return $parent->agentSession->runs()->create([
             'parent_agent_run_id' => $parent->id,
@@ -272,7 +299,10 @@ class AgentSessionManager
             'status' => $status,
             'attempt' => $attempt,
             'context_mode' => 'initial',
-            'submitted_input' => (string) ($delegation['instructions'] ?? $purpose),
+            'submitted_input' => (string) (
+                $delegation['instructions']
+                ?? $purpose
+            ),
             'context_sources' => [
                 [
                     'type' => 'parent_agent_run',
