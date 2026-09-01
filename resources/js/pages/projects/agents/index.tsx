@@ -1,4 +1,4 @@
-import { Head, Link } from '@inertiajs/react';
+import { Head, Link } from "@inertiajs/react";
 import {
     Bot,
     BriefcaseBusiness,
@@ -10,21 +10,21 @@ import {
     Settings2,
     ShieldCheck,
     type LucideIcon,
-} from 'lucide-react';
-import { edit } from '@/actions/App/Http/Controllers/ProjectAgentController';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+} from "lucide-react";
+import { edit } from "@/actions/App/Http/Controllers/ProjectAgentController";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
     Card,
     CardContent,
     CardFooter,
     CardHeader,
-} from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { index as projectsIndex, show as showProject } from '@/routes/projects';
-import { index as agentsIndex } from '@/routes/projects/agents';
-import { index as skillsIndex } from '@/routes/projects/skills';
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { index as projectsIndex, show as showProject } from "@/routes/projects";
+import { index as agentsIndex } from "@/routes/projects/agents";
+import { index as skillsIndex } from "@/routes/projects/skills";
 
 type ProjectSummary = {
     id: number;
@@ -51,10 +51,12 @@ type AgentsPageProps = {
     agents: Agent[];
 };
 
-const AGENT_ROLE_ICONS: Record<string, LucideIcon> = {
-    project_manager: BriefcaseBusiness,
-    coder: Code2,
-    qa: ShieldCheck,
+const AGENT_AVATARS: Record<string, string> = {
+    project_manager: "/images/agents/project-manager.png",
+    architect: "/images/agents/architect.png",
+    coder: "/images/agents/coder.png",
+    qa: "/images/agents/qa.png",
+    devops: "/images/agents/devops.png",
 };
 
 /**
@@ -120,8 +122,6 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                     >
                         {agents.map((agent) => {
                             const titleId = `agent-${agent.id}-title`;
-                            const RoleIcon =
-                                AGENT_ROLE_ICONS[agent.role] ?? Bot;
 
                             return (
                                 <li key={agent.id} className="min-w-0">
@@ -135,13 +135,13 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                     <Badge
                                                         variant={
                                                             agent.enabled
-                                                                ? 'secondary'
-                                                                : 'outline'
+                                                                ? "secondary"
+                                                                : "outline"
                                                         }
                                                         className={
                                                             agent.enabled
                                                                 ? undefined
-                                                                : 'text-muted-foreground'
+                                                                : "text-muted-foreground"
                                                         }
                                                     >
                                                         {agent.enabled ? (
@@ -150,21 +150,26 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                             <CircleMinus aria-hidden="true" />
                                                         )}
                                                         {agent.enabled
-                                                            ? 'Enabled'
-                                                            : 'Disabled'}
+                                                            ? "Enabled"
+                                                            : "Disabled"}
                                                     </Badge>
                                                 </div>
 
                                                 <div className="flex justify-center py-1">
-                                                    <Avatar
-                                                        aria-hidden="true"
-                                                        className="border-border bg-muted size-32 border shadow-xs 2xl:size-36"
-                                                    >
-                                                        <AvatarFallback className="text-muted-foreground bg-muted">
-                                                            <RoleIcon
-                                                                aria-hidden="true"
-                                                                className="size-11 stroke-[1.5] 2xl:size-12"
-                                                            />
+                                                    <Avatar className="border-border size-32 border shadow-xs 2xl:size-36">
+                                                        <AvatarImage
+                                                            src={
+                                                                AGENT_AVATARS[
+                                                                    agent.role
+                                                                ]
+                                                            }
+                                                            alt={`${agent.name} avatar`}
+                                                            className="object-cover"
+                                                        />
+                                                        <AvatarFallback>
+                                                            {agent.name
+                                                                .slice(0, 2)
+                                                                .toUpperCase()}
                                                         </AvatarFallback>
                                                     </Avatar>
                                                 </div>
@@ -179,8 +184,8 @@ export default function Agents({ project, agents }: AgentsPageProps) {
 
                                                     <p className="text-muted-foreground mt-1 text-sm capitalize">
                                                         {agent.role.replaceAll(
-                                                            '_',
-                                                            ' ',
+                                                            "_",
+                                                            " ",
                                                         )}
                                                     </p>
                                                 </div>
@@ -205,7 +210,7 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                         </dt>
                                                         <dd className="min-w-0 text-right font-medium break-words">
                                                             {agent.model ??
-                                                                'Default'}
+                                                                "Default"}
                                                         </dd>
                                                     </div>
                                                 </dl>
@@ -291,7 +296,7 @@ export default function Agents({ project, agents }: AgentsPageProps) {
 Agents.layout = (props: AgentsPageProps) => ({
     breadcrumbs: [
         {
-            title: 'Projects',
+            title: "Projects",
             href: projectsIndex(),
         },
         {
@@ -299,7 +304,7 @@ Agents.layout = (props: AgentsPageProps) => ({
             href: showProject(props.project.id),
         },
         {
-            title: 'Agents',
+            title: "Agents",
             href: agentsIndex(props.project.id),
         },
     ],
