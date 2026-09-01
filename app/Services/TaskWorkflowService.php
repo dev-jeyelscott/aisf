@@ -20,6 +20,7 @@ class TaskWorkflowService
         private readonly CandidateAcceptanceGate $candidateAcceptanceGate,
         private readonly TaskWorktreeManager $worktreeManager,
         private readonly AgentSessionManager $sessionManager,
+        private readonly RepairCycleGuard $repairCycleGuard,
     ) {}
 
     /**
@@ -157,7 +158,7 @@ class TaskWorkflowService
             $this->worktreeManager->assertNoCommitBeforeQa($task);
         }
 
-        return DB::transaction(function () use ($run, $task, $toRole, $reason, $idempotencyKey, $payload): TaskHandoff {
+        return DB::transaction(function () use ($run, $task, $toRole, $reason, $idempotencyKey, $payload, $fromRole): TaskHandoff {
             $locked = Task::query()->lockForUpdate()->findOrFail($task->id);
             $agent = $locked->workRequest->project->agents()->where('role', $toRole)->where('enabled', true)->first();
             if ($agent === null) {
@@ -176,6 +177,26 @@ class TaskWorkflowService
                 'idempotency_key' => Str::limit(trim($idempotencyKey), 100, ''),
                 'dispatched_at' => now(),
             ]);
+
+            // A QA "changes_requested" handoff back to the Coder is a repair cycle. Bound the loop:
+            // once the limit is reached, the Task durably fails instead of looping forever, while
+            // the handoff itself is still recorded for the audit trail.
+            $isRepairCycle = $fromRole === 'qa' && $locked->candidateReviews()
+                ->where('reviewer_agent_run_id', $run->id)
+                ->where('status', 'changes_requested')
+                ->exists();
+
+            if ($isRepairCycle && $this->repairCycleGuard->limitExceeded($locked)) {
+                $limit = (int) config('aisf.max_repair_cycles');
+                $locked->update([
+                    'status' => 'failed',
+                    'blocked_reason' => "The Task exceeded its QA repair cycle limit ({$limit}) and requires operator review.",
+                    'last_handoff' => ['id' => $handoff->id, 'to_role' => $toRole, 'reason' => $reason, 'payload' => $payload],
+                ]);
+
+                return $handoff;
+            }
+
             $locked->update(['status' => 'waiting', 'last_handoff' => ['id' => $handoff->id, 'to_role' => $toRole, 'reason' => $reason, 'payload' => $payload]]);
 
             return $handoff;

@@ -8,8 +8,10 @@ use App\Models\AgentRun;
 use App\Models\AgentSession;
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\TaskHandoff;
 use App\Models\WorkRequest;
 use App\Services\ProjectAgentProvisioner;
+use App\Services\RepairCycleGuard;
 use App\Services\RepositoryInspector;
 use App\Services\TaskWorktreeManager;
 use Illuminate\Http\RedirectResponse;
@@ -59,6 +61,7 @@ class ProjectController extends Controller
         RepositoryInspector $repositoryInspector,
         ProjectAgentProvisioner $provisioner,
         TaskWorktreeManager $worktreeManager,
+        RepairCycleGuard $repairCycleGuard,
     ): Response {
         $provisioner->ensureFor($project);
 
@@ -69,6 +72,8 @@ class ProjectController extends Controller
                 'tasks.agentSessions.projectAgent',
                 'tasks.agentSessions.runs',
                 'tasks.candidateReviews',
+                'tasks.handoffs.fromProjectAgent',
+                'tasks.handoffs.toProjectAgent',
             ])
             ->orderBy('id')
             ->get()
@@ -76,6 +81,7 @@ class ProjectController extends Controller
                 fn (WorkRequest $workRequest): array => $this->workRequestPayload(
                     $workRequest,
                     $worktreeManager,
+                    $repairCycleGuard,
                 ),
             )
             ->values();
@@ -133,6 +139,7 @@ class ProjectController extends Controller
     private function workRequestPayload(
         WorkRequest $workRequest,
         TaskWorktreeManager $worktreeManager,
+        RepairCycleGuard $repairCycleGuard,
     ): array {
         return [
             ...$workRequest->only([
@@ -143,6 +150,8 @@ class ProjectController extends Controller
                 'evidence',
                 'failure_reason',
                 'last_handoff',
+                'source_type',
+                'source_url',
             ]),
             'agent_sessions' => $workRequest->agentSessions
                 ->sortByDesc('updated_at')
@@ -155,7 +164,7 @@ class ProjectController extends Controller
                 ->all(),
             'tasks' => $workRequest->tasks
                 ->map(
-                    fn (Task $task): array => $this->taskPayload($task, $worktreeManager),
+                    fn (Task $task): array => $this->taskPayload($task, $worktreeManager, $repairCycleGuard),
                 )
                 ->values()
                 ->all(),
@@ -167,7 +176,7 @@ class ProjectController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function taskPayload(Task $task, TaskWorktreeManager $worktreeManager): array
+    private function taskPayload(Task $task, TaskWorktreeManager $worktreeManager, RepairCycleGuard $repairCycleGuard): array
     {
         return [
             ...$task->only([
@@ -202,6 +211,19 @@ class ProjectController extends Controller
                 ->map(fn ($review): array => $review->only(['candidate_sha', 'status', 'summary', 'findings', 'created_at']))
                 ->values()
                 ->all(),
+            'handoffs' => $task->handoffs
+                ->sortBy('id')
+                ->map(fn (TaskHandoff $handoff): array => [
+                    'id' => $handoff->id,
+                    'from_role' => $handoff->fromProjectAgent?->role,
+                    'to_role' => $handoff->toProjectAgent?->role,
+                    'reason' => $handoff->reason,
+                    'dispatched_at' => $handoff->dispatched_at?->toIso8601String(),
+                ])
+                ->values()
+                ->all(),
+            'repair_cycle_count' => $repairCycleGuard->repairCycleCount($task),
+            'repair_cycle_limit' => (int) config('aisf.max_repair_cycles'),
         ];
     }
 
@@ -250,6 +272,8 @@ class ProjectController extends Controller
             'context_sources' => $run->context_sources ?? [],
             'output_summary' => $run->output_summary,
             'exit_code' => $run->exit_code,
+            'harness' => $run->execution_metadata['harness'] ?? null,
+            'model' => $run->execution_metadata['model'] ?? null,
             'started_at' => $run->started_at->toIso8601String(),
             'finished_at' => $run->finished_at?->toIso8601String(),
         ];

@@ -45,6 +45,8 @@ type AgentRun = {
     context_sources: ContextSource[];
     output_summary: string | null;
     exit_code: number | null;
+    harness: string | null;
+    model: string | null;
     started_at: string | null;
     finished_at: string | null;
 };
@@ -64,6 +66,14 @@ type Handoff = {
     to_role?: string | null;
     note?: string | null;
 } | null;
+
+type HandoffRecord = {
+    id: number;
+    from_role: string | null;
+    to_role: string | null;
+    reason: string;
+    dispatched_at: string | null;
+};
 
 type Task = {
     id: number;
@@ -87,6 +97,9 @@ type Task = {
     pull_request_url: string | null;
     changed_files: string[];
     agent_sessions: AgentSession[];
+    handoffs: HandoffRecord[];
+    repair_cycle_count: number;
+    repair_cycle_limit: number;
 };
 
 type WorkRequest = {
@@ -103,6 +116,8 @@ type WorkRequest = {
     evidence: string[] | null;
     failure_reason: string | null;
     last_handoff: Handoff;
+    source_type: 'manual' | 'github' | 'notion';
+    source_url: string | null;
     agent_sessions: AgentSession[];
     tasks: Task[];
 };
@@ -231,6 +246,18 @@ function AgentSessionActivity({
                                         <dt>Exit code</dt>
                                         <dd className="text-foreground mt-0.5">
                                             {run.exit_code ?? 'Unavailable'}
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt>Harness</dt>
+                                        <dd className="text-foreground mt-0.5 capitalize">
+                                            {run.harness ?? 'Unavailable'}
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt>Model</dt>
+                                        <dd className="text-foreground mt-0.5">
+                                            {run.model ?? 'Unavailable'}
                                         </dd>
                                     </div>
                                 </dl>
@@ -395,7 +422,25 @@ export default function ProjectWorkspace({
                         className="border-border bg-card rounded-xl border p-5"
                     >
                         <div className="flex flex-wrap items-start justify-between gap-3">
-                            <h2 className="font-medium">Work request</h2>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="font-medium">Work request</h2>
+                                {request.source_type !== 'manual' && (
+                                    <span className="border-border bg-muted text-muted-foreground rounded-full border px-2 py-0.5 text-xs font-medium capitalize">
+                                        {request.source_url ? (
+                                            <a
+                                                href={request.source_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="underline underline-offset-2"
+                                            >
+                                                {request.source_type}
+                                            </a>
+                                        ) : (
+                                            request.source_type
+                                        )}
+                                    </span>
+                                )}
+                            </div>
                             <span
                                 className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(request.status)}`}
                             >
@@ -515,6 +560,19 @@ export default function ProjectWorkspace({
                                                     >
                                                         {humanize(task.status)}
                                                     </span>
+                                                    {task.repair_cycle_count >
+                                                        0 && (
+                                                        <span className="border-border bg-muted text-muted-foreground rounded-full border px-2.5 py-1 text-xs font-medium">
+                                                            Repair cycle{' '}
+                                                            {
+                                                                task.repair_cycle_count
+                                                            }{' '}
+                                                            of{' '}
+                                                            {
+                                                                task.repair_cycle_limit
+                                                            }
+                                                        </span>
+                                                    )}
                                                     {(task.status ===
                                                         'pending' ||
                                                         task.status ===
@@ -653,6 +711,48 @@ export default function ProjectWorkspace({
                                                         </p>
                                                     )}
                                                 </div>
+                                            )}
+
+                                            {task.handoffs.length > 0 && (
+                                                <details className="border-border mt-4 rounded-md border">
+                                                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                                                        Handoff history (
+                                                        {task.handoffs.length})
+                                                    </summary>
+                                                    <ol className="border-border divide-border divide-y border-t text-sm">
+                                                        {task.handoffs.map(
+                                                            (handoff) => (
+                                                                <li
+                                                                    key={
+                                                                        handoff.id
+                                                                    }
+                                                                    className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                                                                >
+                                                                    <span className="capitalize">
+                                                                        {humanize(
+                                                                            handoff.from_role ??
+                                                                                'unknown',
+                                                                        )}{' '}
+                                                                        →{' '}
+                                                                        {humanize(
+                                                                            handoff.to_role ??
+                                                                                'unknown',
+                                                                        )}{' '}
+                                                                        ·{' '}
+                                                                        {humanize(
+                                                                            handoff.reason,
+                                                                        )}
+                                                                    </span>
+                                                                    <span className="text-muted-foreground text-xs">
+                                                                        {formatTimestamp(
+                                                                            handoff.dispatched_at,
+                                                                        )}
+                                                                    </span>
+                                                                </li>
+                                                            ),
+                                                        )}
+                                                    </ol>
+                                                </details>
                                             )}
 
                                             {task.worktree_path && (

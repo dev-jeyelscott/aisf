@@ -22,6 +22,10 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
         ]);
+
+        // GitHub verifies webhook deliveries with its own HMAC signature (see
+        // GithubWebhookController), not a Laravel session CSRF token.
+        $middleware->validateCsrfTokens(except: ['webhooks/github/*']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

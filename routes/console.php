@@ -11,3 +11,7 @@ Artisan::command('inspire', function () {
 Schedule::command('workflow:dispatch')
     ->everyMinute()
     ->withoutOverlapping();
+
+Schedule::command('notion:sync')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

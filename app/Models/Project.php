@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['title', 'description', 'path', 'enabled', 'merge_policy'])]
+#[Fillable(['title', 'description', 'path', 'enabled', 'merge_policy', 'github_repository', 'github_webhook_secret', 'github_ready_label', 'notion_database_id', 'notion_integration_token', 'notion_ready_status'])]
 class Project extends Model
 {
     /** @use HasFactory<ProjectFactory> */
@@ -20,7 +20,7 @@ class Project extends Model
     public $timestamps = false;
 
     /**
-     * Cast persisted Project state to application types.
+     * Cast persisted Project state to application types. Integration credentials are encrypted at rest.
      *
      * @return array<string, string>
      */
@@ -28,6 +28,8 @@ class Project extends Model
     {
         return [
             'enabled' => 'boolean',
+            'github_webhook_secret' => 'encrypted',
+            'notion_integration_token' => 'encrypted',
         ];
     }
 

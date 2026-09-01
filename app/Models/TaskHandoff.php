@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/** @property Carbon|null $dispatched_at */
 #[Fillable(['from_project_agent_id', 'to_project_agent_id', 'from_agent_run_id', 'reason', 'payload', 'idempotency_key', 'dispatched_at'])]
 class TaskHandoff extends Model
 {

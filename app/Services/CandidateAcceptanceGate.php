@@ -41,16 +41,22 @@ class CandidateAcceptanceGate
         ]);
     }
 
+    /**
+     * The most recent review of the Task's current candidate must be an approval. Using the latest
+     * review (rather than "no changes_requested ever recorded") lets a Coder repair fix a prior
+     * changes_requested finding and still reach approval for the same candidate SHA.
+     */
     public function hasCurrentApproval(Task $task): bool
     {
-        return filled($task->candidate_sha)
-            && $task->candidateReviews()
-                ->where('candidate_sha', $task->candidate_sha)
-                ->where('status', 'approved')
-                ->exists()
-            && ! $task->candidateReviews()
-                ->where('candidate_sha', $task->candidate_sha)
-                ->where('status', 'changes_requested')
-                ->exists();
+        if (! filled($task->candidate_sha)) {
+            return false;
+        }
+
+        $latestReview = $task->candidateReviews()
+            ->where('candidate_sha', $task->candidate_sha)
+            ->latest('id')
+            ->first();
+
+        return $latestReview?->status === 'approved';
     }
 }

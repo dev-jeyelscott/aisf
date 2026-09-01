@@ -6,6 +6,7 @@ use App\Models\AgentRun;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentExecutionRunner;
+use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -49,7 +50,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
         return (string) $this->projectId();
     }
 
-    public function handle(AgentExecutionRunner $runner): void
+    public function handle(AgentExecutionRunner $runner, TaskCommitIntegrator $commitIntegrator): void
     {
         $subject = $this->freshSubject();
 
@@ -64,7 +65,13 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
         // mechanism ($tries); only after the final attempt does failed() persist it as terminal.
         $completion = $runner->run($subject, $this->operatorInstruction);
 
-        $this->applyCompletion($subject, $completion);
+        $this->applyCompletion($subject, $completion, $commitIntegrator);
+
+        // Fire the happy-path continuation immediately instead of waiting for the next
+        // workflow:dispatch scheduler tick (up to 60s later). The short delay lets this job's own
+        // per-project ShouldBeUnique lock release first; workflow:dispatch still reconciles
+        // anything this attempt misses.
+        DispatchWorkflowForProject::dispatch($this->projectId())->delay(now()->addSeconds(2));
     }
 
     /**
@@ -80,7 +87,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     /**
      * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
-    private function applyCompletion(Task|WorkRequest $subject, array $completion): void
+    private function applyCompletion(Task|WorkRequest $subject, array $completion, TaskCommitIntegrator $commitIntegrator): void
     {
         if ($subject instanceof Task && $subject->refresh()->status === 'waiting' && isset($subject->last_handoff['id'])) {
             return;
@@ -115,7 +122,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        $this->completeTask($subject, $completion);
+        $this->completeTask($subject, $completion, $commitIntegrator);
     }
 
     /**
@@ -151,13 +158,15 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     /**
      * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
-    private function completeTask(Task $task, array $completion): void
+    private function completeTask(Task $task, array $completion, TaskCommitIntegrator $commitIntegrator): void
     {
-        if (filled($completion['commit_sha'])) {
-            throw new \UnexpectedValueException('A Coder may not report a commit before QA approval.');
+        if (! filled($completion['commit_sha'])) {
+            throw new \UnexpectedValueException('A Task Agent must save its result and request a durable handoff before completing.');
         }
 
-        throw new \UnexpectedValueException('A Task Agent must save its result and request a durable handoff before completing.');
+        $run = AgentRun::query()->findOrFail($completion['agent_run_id']);
+
+        $commitIntegrator->integrate($task, $run, $completion['commit_sha'], $completion['summary']);
     }
 
     private function freshSubject(): Task|WorkRequest

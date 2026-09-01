@@ -2,9 +2,7 @@
 
 use App\Console\Commands\DispatchWorkflow;
 use App\Jobs\ProcessAgentExecution;
-use App\Models\AgentRun;
 use App\Models\Project;
-use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
@@ -227,32 +225,3 @@ test('a Coder repair turn receives the newest durable QA findings', function () 
     expect($handoff->toProjectAgent->role)->toBe('coder')
         ->and($context['latest_handoff']['payload']['findings'])->toBe(['Handle the empty result.']);
 });
-
-/** @return array{0: Project, 1: Task, 2: AgentRun} */
-function taskRoleHandoffFixture(string $role): array
-{
-    $project = Project::factory()->create();
-    app(ProjectAgentProvisioner::class)->ensureFor($project);
-    $workRequest = $project->workRequests()->create(['prompt' => 'Implement the requested change.']);
-    $task = $workRequest->tasks()->create([
-        'position' => 1,
-        'title' => 'Implement the requested change',
-        'objective' => 'Deliver the behavior.',
-        'implementation_spec' => 'Use existing conventions.',
-        'acceptance_criteria' => [],
-        'verification_commands' => [],
-        'browser_steps' => [],
-    ]);
-    $agent = $project->agents()->where('role', $role)->sole();
-    $session = app(AgentSessionManager::class)->forSubject($agent, $task);
-    $run = app(AgentSessionManager::class)->startRun($session, $role, [
-        'mode' => 'initial',
-        'input' => 'Execute the Task.',
-        'sources' => [],
-        'agent_snapshot' => [],
-        'prompt_snapshot' => [],
-        'role' => $role,
-    ]);
-
-    return [$project, $task, $run];
-}

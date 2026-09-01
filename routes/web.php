@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AgentInstructionDefaultController;
+use App\Http\Controllers\GithubWebhookController;
 use App\Http\Controllers\ProjectAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectSkillController;
@@ -19,6 +20,7 @@ Route::post('projects/{project}/work-requests', [WorkRequestController::class, '
 Route::post('projects/{project}/work-requests/{work_request}/retry', [WorkRequestController::class, 'retry'])->name('projects.work-requests.retry');
 Route::post('projects/{project}/tasks/{task}/run', [TaskController::class, 'run'])->name('projects.tasks.run');
 Route::post('projects/{project}/tasks/{task}/retry', [TaskController::class, 'retry'])->name('projects.tasks.retry');
+Route::post('webhooks/github/{project}', GithubWebhookController::class)->name('webhooks.github');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');

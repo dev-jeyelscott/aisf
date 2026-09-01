@@ -3,28 +3,25 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreWorkRequestRequest;
-use App\Jobs\ProcessAgentExecution;
 use App\Models\Project;
 use App\Models\WorkRequest;
-use App\Services\AgentSessionManager;
+use App\Services\WorkRequestIngestion;
 use Illuminate\Http\RedirectResponse;
+use UnexpectedValueException;
 
 class WorkRequestController extends Controller
 {
-    public function store(StoreWorkRequestRequest $request, Project $project, AgentSessionManager $sessionManager): RedirectResponse
+    /**
+     * A manual submission is the same durable WorkRequest contract a GitHub issue or Notion task
+     * produces — see WorkRequestIngestion — just without a stable external identity.
+     */
+    public function store(StoreWorkRequestRequest $request, Project $project, WorkRequestIngestion $ingestion): RedirectResponse
     {
-        $agents = $project->agents()->whereIn('role', ['project_manager', 'coder', 'qa'])->where('enabled', true)->get()->keyBy('role');
-        foreach (['project_manager', 'coder', 'qa'] as $role) {
-            if (! $agents->has($role)) {
-                return back()->withErrors(['prompt' => "An enabled {$role} Agent is required before submitting work."]);
-            }
+        try {
+            $ingestion->ingest($project, 'manual', $request->validated('prompt'));
+        } catch (UnexpectedValueException $exception) {
+            return back()->withErrors(['prompt' => $exception->getMessage()]);
         }
-
-        $workRequest = $project->workRequests()->create($request->validated());
-        foreach ($agents as $agent) {
-            $sessionManager->forSubject($agent, $workRequest);
-        }
-        ProcessAgentExecution::dispatch($workRequest);
 
         return to_route('projects.show', $project);
     }
