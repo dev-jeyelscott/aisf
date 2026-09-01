@@ -122,7 +122,7 @@ export default function Agents({ project, agents, skills }: AgentsPageProps) {
                 ) : (
                     <ul
                         role="list"
-                        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[repeat(auto-fit,minmax(14rem,15rem))] 2xl:justify-start"
+                        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3 2xl:justify-start"
                     >
                         {agents.map((agent) => {
                             const titleId = `agent-${agent.id}-title`;
