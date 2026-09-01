@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AgentRun;
+use App\Models\AgentRunAction;
 use App\Models\AgentSession;
 use App\Models\ProjectAgent;
 use App\Models\Task;
@@ -199,7 +200,7 @@ class AgentSessionManager
     }
 
     /**
-     * Mark one running invocation successful with a concise durable summary.
+     * Mark one running invocation successful and atomically record that its workflow outcome was persisted.
      *
      * @param  array<string, mixed>  $executionMetadata
      */
@@ -216,19 +217,36 @@ class AgentSessionManager
             $summary = 'Agent execution completed successfully.';
         }
 
-        $run->refresh();
+        DB::transaction(
+            function () use ($run, $summary, $exitCode, $rawOutputReference, $executionMetadata): void {
+                $lockedRun = AgentRun::query()
+                    ->lockForUpdate()
+                    ->findOrFail($run->getKey());
 
-        AgentRun::query()
-            ->whereKey($run->getKey())
-            ->where('status', 'running')
-            ->update([
-                'status' => 'succeeded',
-                'output_summary' => Str::limit($summary, 2000, ''),
-                'raw_output_reference' => $rawOutputReference,
-                'execution_metadata' => array_merge($run->execution_metadata ?? [], $executionMetadata),
-                'exit_code' => $exitCode,
-                'finished_at' => now(),
-            ]);
+                if ($lockedRun->status !== 'running') {
+                    return;
+                }
+
+                $lockedRun->update([
+                    'status' => 'succeeded',
+                    'output_summary' => Str::limit($summary, 2000, ''),
+                    'raw_output_reference' => $rawOutputReference,
+                    'execution_metadata' => array_merge(
+                        $lockedRun->execution_metadata ?? [],
+                        $executionMetadata,
+                    ),
+                    'exit_code' => $exitCode,
+                    'finished_at' => now(),
+                ]);
+
+                $lockedRun->actions()->create([
+                    'action' => AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                    'resource_type' => AgentRunAction::RESOURCE_AGENT_RUN,
+                    'resource_id' => $lockedRun->id,
+                ]);
+            },
+            attempts: 3,
+        );
 
         $run->refresh();
     }
@@ -255,12 +273,26 @@ class AgentSessionManager
             'attempt' => $attempt,
             'context_mode' => 'initial',
             'submitted_input' => (string) ($delegation['instructions'] ?? $purpose),
-            'context_sources' => [['type' => 'parent_agent_run', 'label' => 'Parent Foreman execution']],
-            'agent_snapshot' => ['kind' => 'ephemeral', 'harness' => $delegation['harness'] ?? null, 'model' => $delegation['model'] ?? null],
-            'prompt_snapshot' => ['purpose' => $purpose, 'instructions' => $delegation['instructions'] ?? null],
+            'context_sources' => [
+                [
+                    'type' => 'parent_agent_run',
+                    'label' => 'Parent Foreman execution',
+                ],
+            ],
+            'agent_snapshot' => [
+                'kind' => 'ephemeral',
+                'harness' => $delegation['harness'] ?? null,
+                'model' => $delegation['model'] ?? null,
+            ],
+            'prompt_snapshot' => [
+                'purpose' => $purpose,
+                'instructions' => $delegation['instructions'] ?? null,
+            ],
             'output_summary' => $delegation['evidence'] ?? null,
             'raw_output_reference' => null,
-            'execution_metadata' => ['delegation' => $delegation],
+            'execution_metadata' => [
+                'delegation' => $delegation,
+            ],
             'artifacts' => $delegation['artifacts'] ?? [],
             'exit_code' => null,
             'started_at' => now(),

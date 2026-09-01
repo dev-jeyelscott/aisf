@@ -73,19 +73,41 @@ class AgentRun extends Model
         return $this->belongsTo(AgentSession::class);
     }
 
-    /** @return BelongsTo<AgentRun, $this> */
+    /**
+     * Return the parent AgentRun when this invocation was delegated.
+     *
+     * @return BelongsTo<AgentRun, $this>
+     */
     public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_agent_run_id');
     }
 
-    /** @return HasMany<AgentRun, $this> */
+    /**
+     * Return AgentRuns delegated from this invocation.
+     *
+     * @return HasMany<AgentRun, $this>
+     */
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_agent_run_id');
     }
 
-    /** @return HasMany<TaskHandoff, $this> */
+    /**
+     * Return durable mutations attributed to this exact invocation.
+     *
+     * @return HasMany<AgentRunAction, $this>
+     */
+    public function actions(): HasMany
+    {
+        return $this->hasMany(AgentRunAction::class);
+    }
+
+    /**
+     * Return Task handoffs created by this invocation.
+     *
+     * @return HasMany<TaskHandoff, $this>
+     */
     public function handoffs(): HasMany
     {
         return $this->hasMany(TaskHandoff::class, 'from_agent_run_id');
