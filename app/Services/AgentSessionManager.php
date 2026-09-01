@@ -233,8 +233,9 @@ class AgentSessionManager
                 $executionMetadata,
             ): void {
                 $lockedRun = AgentRun::query()
+                    ->whereKey($run->getKey())
                     ->lockForUpdate()
-                    ->findOrFail($run->getKey());
+                    ->firstOrFail();
 
                 if ($lockedRun->status !== 'running') {
                     return;
