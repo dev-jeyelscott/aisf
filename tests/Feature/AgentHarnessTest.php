@@ -80,6 +80,7 @@ it('starts and resumes Codex with a persistent read-only thread when the install
             'read-only',
             '--color',
             'never',
+            ...feature04BoostMcpConfigArgs(),
             '--output-schema',
             '<schema>',
             '--model',
@@ -96,6 +97,7 @@ it('starts and resumes Codex with a persistent read-only thread when the install
             'read-only',
             '--color',
             'never',
+            ...feature04BoostMcpConfigArgs(),
             '--output-schema',
             '<schema>',
             '--model',
@@ -142,6 +144,7 @@ it('retains Codex ephemeral fallback when the installed CLI does not advertise r
             'read-only',
             '--color',
             'never',
+            ...feature04BoostMcpConfigArgs(),
             '--output-schema',
             '<schema>',
             '--model',
@@ -215,6 +218,8 @@ it('starts and resumes Claude with persistent read-only plan sessions when the i
                 '--print',
                 '--output-format',
                 'json',
+                '--mcp-config',
+                feature04BoostMcpConfigJson(),
                 '--json-schema',
                 '{"type":"object"}',
                 '--permission-mode',
@@ -227,6 +232,8 @@ it('starts and resumes Claude with persistent read-only plan sessions when the i
                 '--print',
                 '--output-format',
                 'json',
+                '--mcp-config',
+                feature04BoostMcpConfigJson(),
                 '--json-schema',
                 '{"type":"object"}',
                 '--permission-mode',
@@ -284,6 +291,8 @@ it('retains Claude non-persistent fallback when the installed CLI does not adver
             '--print',
             '--output-format',
             'json',
+            '--mcp-config',
+            feature04BoostMcpConfigJson(),
             '--json-schema',
             '{"type":"object"}',
             '--permission-mode',
@@ -327,6 +336,7 @@ it('grants Codex workspace-write access only for writable Coder execution', func
             'workspace-write',
             '--color',
             'never',
+            ...feature04BoostMcpConfigArgs(),
             '-',
         ]);
 });
@@ -367,6 +377,8 @@ it('grants Claude accept-edits access only for writable Coder execution', functi
             '--print',
             '--output-format',
             'json',
+            '--mcp-config',
+            feature04BoostMcpConfigJson(),
             '--permission-mode',
             'acceptEdits',
             '--no-session-persistence',
@@ -406,6 +418,36 @@ it('returns process failure metadata without exposing raw provider output', func
             'Codex Agent execution failed with exit code 17.',
         );
 });
+
+/**
+ * The Codex `-c` overrides that wire this application's Boost MCP server into every execution.
+ *
+ * @return list<string>
+ */
+function feature04BoostMcpConfigArgs(): array
+{
+    return [
+        '-c',
+        'mcp_servers.boost.command="php"',
+        '-c',
+        'mcp_servers.boost.args='.json_encode([base_path('artisan'), 'boost:mcp'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+    ];
+}
+
+/**
+ * The Claude `--mcp-config` JSON payload that wires this application's Boost MCP server into every execution.
+ */
+function feature04BoostMcpConfigJson(): string
+{
+    return json_encode([
+        'mcpServers' => [
+            'boost' => [
+                'command' => 'php',
+                'args' => [base_path('artisan'), 'boost:mcp'],
+            ],
+        ],
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+}
 
 /**
  * Normalize the unpredictable temporary schema filename so full Codex command arrays remain exactly assertable.

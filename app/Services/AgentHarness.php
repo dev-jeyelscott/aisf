@@ -172,6 +172,10 @@ class AgentHarness
             $command[] = $writable ? 'workspace-write' : 'read-only';
             $command[] = '--color';
             $command[] = 'never';
+            $command[] = '-c';
+            $command[] = 'mcp_servers.boost.command="php"';
+            $command[] = '-c';
+            $command[] = 'mcp_servers.boost.args='.$this->encodeJsonValue($this->boostMcpArgs());
 
             if ($schemaPath !== null) {
                 $command[] = '--output-schema';
@@ -339,6 +343,15 @@ class AgentHarness
             '--print',
             '--output-format',
             'json',
+            '--mcp-config',
+            $this->encodeJsonValue([
+                'mcpServers' => [
+                    'boost' => [
+                        'command' => 'php',
+                        'args' => $this->boostMcpArgs(),
+                    ],
+                ],
+            ]),
         ];
 
         if ($schema !== null) {
@@ -449,6 +462,17 @@ class AgentHarness
             providerSessionId: $capturedSessionId,
             exitCode: $result->exitCode(),
         );
+    }
+
+    /**
+     * Arguments that start this application's Boost MCP server, addressed by absolute path so the
+     * provider CLI can reach it regardless of the working directory of the repository under execution.
+     *
+     * @return list<string>
+     */
+    private function boostMcpArgs(): array
+    {
+        return [base_path('artisan'), 'boost:mcp'];
     }
 
     /**

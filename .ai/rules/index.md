@@ -4,10 +4,11 @@ Before planning or editing, find the row whose globs match the file's path and r
 
 | Applies to                                                                                                                                                    | Rule file                          |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| app/Mcp/Tools/*.php,app/Services/TaskContextBuilder.php,app/Services/TaskWorkflowService.php,app/Models/TaskHandoff.php                                       | .ai/rules/agent-handoffs.md        |
-| app/Console/Commands/*.php                                                                                                                                    | .ai/rules/commands.md              |
-| app/Jobs/*.php,app/Services/AgentExecutionRunner.php,app/Console/Commands/DispatchWorkflow.php                                                                | .ai/rules/console-commands.md      |
+| app/Mcp/Tools/\*.php,app/Services/TaskContextBuilder.php,app/Services/TaskWorkflowService.php,app/Models/TaskHandoff.php                                      | .ai/rules/agent-handoffs.md        |
+| app/Services/AgentHarness.php                                                                                                                                 | .ai/rules/app-services.md          |
+| app/Console/Commands/\*.php                                                                                                                                   | .ai/rules/commands.md              |
+| app/Jobs/\*.php,app/Services/AgentExecutionRunner.php,app/Console/Commands/DispatchWorkflow.php                                                               | .ai/rules/console-commands.md      |
 | app/Services/WorkflowDispatcher.php,app/Jobs/DispatchWorkflowForProject.php,app/Console/Commands/DispatchWorkflow.php                                         | .ai/rules/jobs-console-commands.md |
-| app/Jobs/Process*.php                                                                                                                                         | .ai/rules/jobs.md                  |
+| app/Jobs/Process\*.php                                                                                                                                        | .ai/rules/jobs.md                  |
 | app/Services/TaskCommitIntegrator.php,app/Services/RepairCycleGuard.php,app/Services/CandidateAcceptanceGate.php,app/Jobs/ProcessAgentExecution.php           | .ai/rules/services-jobs.md         |
 | app/Services/WorkRequestIngestion.php,app/Http/Controllers/GithubWebhookController.php,app/Console/Commands/SyncNotionTasks.php,app/Services/NotionClient.php | .ai/rules/services.md              |
