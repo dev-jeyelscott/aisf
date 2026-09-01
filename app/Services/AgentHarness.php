@@ -325,7 +325,7 @@ class AgentHarness
     }
 
     /**
-     * Execute Claude in read-only plan mode by default, or accept-edits mode for Coder implementation runs, enabling local session persistence only when stable resume support is advertised.
+     * Execute Claude with mutating tools explicitly denied by default, or accept-edits mode for Coder implementation runs, enabling local session persistence only when stable resume support is advertised.
      *
      * @param  array<string, mixed>|null  $schema
      */
@@ -360,7 +360,16 @@ class AgentHarness
         }
 
         $command[] = '--permission-mode';
-        $command[] = $writable ? 'acceptEdits' : 'plan';
+        $command[] = $writable ? 'acceptEdits' : 'bypassPermissions';
+
+        if (! $writable) {
+            // Plan Mode cannot be used here: exiting it requires the ExitPlanMode tool, which only
+            // an interactive approver can invoke, so a headless run can never leave it and every
+            // tool call (including the durable MCP handoff tools) is refused. Enforce read-only
+            // access explicitly instead by denying the mutating built-in tools outright.
+            $command[] = '--disallowedTools';
+            $command[] = 'Edit,MultiEdit,Write,NotebookEdit';
+        }
 
         if ($providerSessionId !== null && $supportsResume) {
             $command[] = '--resume';
