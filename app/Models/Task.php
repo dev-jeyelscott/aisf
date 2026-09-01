@@ -90,4 +90,10 @@ class Task extends Model
     {
         return $this->hasMany(CandidateReview::class);
     }
+
+    /** @return HasMany<TaskHandoff, $this> */
+    public function handoffs(): HasMany
+    {
+        return $this->hasMany(TaskHandoff::class);
+    }
 }

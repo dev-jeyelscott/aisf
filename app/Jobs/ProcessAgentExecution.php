@@ -6,7 +6,7 @@ use App\Models\AgentRun;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentExecutionRunner;
-use App\Services\CandidateAcceptanceGate;
+use App\Services\TaskWorkflowService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -64,7 +64,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
         // mechanism ($tries); only after the final attempt does failed() persist it as terminal.
         $completion = $runner->run($subject, $this->operatorInstruction);
 
-        $this->applyCompletion($subject, $completion, $runner);
+        $this->applyCompletion($subject, $completion);
     }
 
     /**
@@ -80,8 +80,12 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     /**
      * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
-    private function applyCompletion(Task|WorkRequest $subject, array $completion, AgentExecutionRunner $runner): void
+    private function applyCompletion(Task|WorkRequest $subject, array $completion): void
     {
+        if ($subject instanceof Task && $subject->refresh()->status === 'waiting' && isset($subject->last_handoff['id'])) {
+            return;
+        }
+
         if ($completion['status'] === 'failed') {
             $this->markFailed($completion['summary']);
 
@@ -89,6 +93,10 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
         }
 
         if ($completion['status'] === 'waiting') {
+            if ($subject instanceof Task) {
+                throw new \UnexpectedValueException('A Task Agent must use the durable handoff tool instead of returning a raw handoff.');
+            }
+
             $subject::query()->whereKey($subject->getKey())
                 ->where('status', 'running')
                 ->update([
@@ -107,7 +115,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        $this->completeTask($subject, $completion, $runner);
+        $this->completeTask($subject, $completion);
     }
 
     /**
@@ -122,33 +130,6 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
                 return;
             }
 
-            $locked->tasks()->delete();
-
-            foreach (($completion['tasks'] ?? []) as $index => $taskPlan) {
-                $position = $index + 1;
-                $dependsOnPosition = $taskPlan['depends_on_position'] ?? null;
-                $dependsOnTaskId = null;
-
-                if (is_int($dependsOnPosition) && $dependsOnPosition >= 1 && $dependsOnPosition < $position) {
-                    $dependency = $locked->tasks()->where('position', $dependsOnPosition)->first();
-                    $dependsOnTaskId = $dependency?->getKey();
-                }
-
-                $locked->tasks()->create([
-                    'assigned_project_agent_id' => filled($taskPlan['assigned_agent_role'] ?? null)
-                        ? $locked->project->agents()->where('role', $taskPlan['assigned_agent_role'])->value('id')
-                        : null,
-                    'depends_on_task_id' => $dependsOnTaskId,
-                    'position' => $position,
-                    'title' => (string) $taskPlan['title'],
-                    'objective' => (string) ($taskPlan['objective'] ?? $taskPlan['title']),
-                    'implementation_spec' => (string) ($taskPlan['implementation_spec'] ?? ''),
-                    'acceptance_criteria' => $taskPlan['acceptance_criteria'] ?? [],
-                    'verification_commands' => $taskPlan['verification_commands'] ?? [],
-                    'browser_steps' => $taskPlan['browser_steps'] ?? [],
-                ]);
-            }
-
             $locked->update([
                 'status' => 'completed',
                 'summary' => $completion['summary'],
@@ -157,107 +138,26 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
                 'last_handoff' => null,
             ]);
         }, attempts: 3);
+
+        if (($completion['tasks'] ?? []) !== [] && ! $workRequest->tasks()->exists()) {
+            app(TaskWorkflowService::class)->persistPlan(
+                AgentRun::query()->findOrFail($completion['agent_run_id']),
+                $workRequest,
+                $completion['tasks'] ?? [],
+            );
+        }
     }
 
     /**
      * @param  array{status: string, summary: string, handoff: array<string, mixed>|null, commit_sha: string|null, tasks: list<array<string, mixed>>|null, already_implemented: bool|null, delegations: list<array<string, mixed>>, review: array<string, mixed>|null, agent_run_id: int}  $completion
      */
-    private function completeTask(Task $task, array $completion, AgentExecutionRunner $runner): void
+    private function completeTask(Task $task, array $completion): void
     {
-        if (is_array($completion['review'] ?? null)) {
-            $review = $completion['review'];
-            $candidateRunId = $task->last_handoff['candidate_agent_run_id'] ?? null;
-            $candidateRun = AgentRun::query()->find($candidateRunId);
-            $reviewerRun = AgentRun::query()->find($completion['agent_run_id']);
-
-            if (! $candidateRun instanceof AgentRun || ! $reviewerRun instanceof AgentRun) {
-                throw new \UnexpectedValueException('AISF could not locate the candidate and reviewer execution evidence.');
-            }
-
-            app(CandidateAcceptanceGate::class)->recordReview(
-                $task,
-                $candidateRun,
-                $reviewerRun,
-                $review['candidate_sha'],
-                $review['status'],
-                $review['summary'],
-                $review['findings'],
-            );
-
-            if ($review['status'] === 'changes_requested') {
-                $task->update([
-                    'status' => 'waiting',
-                    'last_handoff' => ['to_role' => 'foreman', 'note' => $review['summary'], 'findings' => $review['findings']],
-                ]);
-
-                return;
-            }
-
-            $task->loadMissing('workRequest.project');
-            if ($task->workRequest->project->merge_policy === 'automatic') {
-                try {
-                    if (! app(CandidateAcceptanceGate::class)->hasCurrentApproval($task)) {
-                        throw new \UnexpectedValueException('Automatic merge requires current independent approval.');
-                    }
-
-                    $runner->mergeVerifiedCandidate($task);
-                } catch (Throwable $exception) {
-                    $task->update([
-                        'status' => 'waiting',
-                        'last_handoff' => [
-                            'to_role' => 'foreman',
-                            'note' => 'AISF merge gate rejected the candidate: '.$exception->getMessage(),
-                        ],
-                    ]);
-
-                    return;
-                }
-            }
-
-            $task->update(['status' => 'completed', 'last_handoff' => null]);
-
-            return;
-        }
-
         if (filled($completion['commit_sha'])) {
-            $result = $runner->integrateReportedCommit($task, $completion['commit_sha'], $completion['summary']);
-
-            if ($result !== null && ! $result['integrated']) {
-                Task::query()->whereKey($task->getKey())
-                    ->where('status', 'running')
-                    ->update([
-                        'status' => 'waiting',
-                        'blocked_reason' => null,
-                        'last_handoff' => [
-                            'to_role' => 'foreman',
-                            'note' => "CI checks failed before a pull request could be opened:\n\n".Str::limit($result['ci_output'], 4000, ''),
-                        ],
-                    ]);
-
-                return;
-            }
-
-            Task::query()->whereKey($task->getKey())
-                ->where('status', 'running')
-                ->update([
-                    'status' => 'waiting',
-                    'candidate_sha' => $result['commit_sha'],
-                    'last_handoff' => ['to_role' => 'foreman', 'candidate_agent_run_id' => $completion['agent_run_id'], 'note' => 'Coordinate an independent review for this exact candidate SHA.'],
-                    'blocked_reason' => null,
-                    'commit_sha' => $result['commit_sha'],
-                    'pull_request_url' => $result['pull_request_url'],
-                ]);
-
-            return;
+            throw new \UnexpectedValueException('A Coder may not report a commit before QA approval.');
         }
 
-        Task::query()->whereKey($task->getKey())
-            ->where('status', 'running')
-            ->update([
-                'status' => 'completed',
-                'last_handoff' => null,
-                'blocked_reason' => null,
-            ]);
+        throw new \UnexpectedValueException('A Task Agent must save its result and request a durable handoff before completing.');
     }
 
     private function freshSubject(): Task|WorkRequest

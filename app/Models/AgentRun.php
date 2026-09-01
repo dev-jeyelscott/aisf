@@ -13,11 +13,14 @@ use Illuminate\Support\Carbon;
 /**
  * @property Carbon $started_at
  * @property Carbon|null $finished_at
+ * @property array<string, mixed>|null $execution_metadata
+ * @property array<string, mixed>|null $artifacts
  */
 #[Fillable([
     'parent_agent_run_id',
     'purpose',
     'role',
+    'execution_token',
     'status',
     'attempt',
     'context_mode',
@@ -37,6 +40,8 @@ class AgentRun extends Model
 {
     /** @use HasFactory<AgentRunFactory> */
     use HasFactory;
+
+    protected $hidden = ['execution_token'];
 
     /**
      * Cast persisted execution metadata to its application types.
@@ -78,5 +83,11 @@ class AgentRun extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_agent_run_id');
+    }
+
+    /** @return HasMany<TaskHandoff, $this> */
+    public function handoffs(): HasMany
+    {
+        return $this->hasMany(TaskHandoff::class, 'from_agent_run_id');
     }
 }

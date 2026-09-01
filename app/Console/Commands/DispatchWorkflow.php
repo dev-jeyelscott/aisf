@@ -54,6 +54,7 @@ class DispatchWorkflow extends Command
 
         $task = $this->tasksForProject($project)
             ->whereIn('status', ['pending', 'waiting'])
+            ->whereNotNull('last_handoff')
             ->where(function ($query): void {
                 $query->whereNull('depends_on_task_id')
                     ->orWhereHas('dependsOn', fn ($dependency) => $dependency->where('status', 'completed'));

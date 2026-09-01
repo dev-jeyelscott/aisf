@@ -21,7 +21,7 @@ class TaskController extends Controller
             'operator_instruction' => ['nullable', 'string', 'max:5000'],
         ]);
 
-        if (in_array($task->status, ['pending', 'waiting'], true)) {
+        if (in_array($task->status, ['pending', 'waiting'], true) && isset($task->last_handoff['id'])) {
             ProcessAgentExecution::dispatch($task, $validated['operator_instruction'] ?? null);
         }
 

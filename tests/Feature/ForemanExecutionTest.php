@@ -8,14 +8,14 @@ use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
 use UnexpectedValueException;
 
-test('a Foreman prompt snapshots global defaults, Agent configuration, Skills, and Task context', function () {
+test('a Project Manager prompt snapshots Agent configuration, Skills, and Task context', function () {
     $project = Project::factory()->create();
     app(ProjectAgentProvisioner::class)->ensureFor($project);
-    $foreman = $project->agents()->where('role', 'foreman')->sole();
+    $foreman = $project->agents()->where('role', 'project_manager')->sole();
     $foreman->update(['workflow_instructions' => 'Plan durable Tasks.', 'model' => 'gpt-5.6']);
     $skill = $project->skills()->create(['name' => 'Repository inspection', 'instructions' => 'Inspect before planning.', 'enabled' => true]);
     $foreman->skills()->attach($skill, ['position' => 1]);
-    AgentInstructionDefault::query()->create(['role' => 'foreman', 'instructions' => 'Return durable engineering evidence.']);
+    AgentInstructionDefault::query()->create(['role' => 'project_manager', 'instructions' => 'Return durable engineering evidence.']);
     $workRequest = $project->workRequests()->create(['prompt' => 'Improve the factory.']);
     $task = $workRequest->tasks()->create([
         'position' => 1,
@@ -42,14 +42,14 @@ test('a Foreman prompt snapshots global defaults, Agent configuration, Skills, a
 test('reported ephemeral delegations are persisted as child Agent runs', function () {
     $project = Project::factory()->create();
     app(ProjectAgentProvisioner::class)->ensureFor($project);
-    $foreman = $project->agents()->where('role', 'foreman')->sole();
+    $foreman = $project->agents()->where('role', 'project_manager')->sole();
     $workRequest = $project->workRequests()->create(['prompt' => 'Investigate an issue.']);
     $session = app(AgentSessionManager::class)->forSubject($foreman, $workRequest);
-    $parent = app(AgentSessionManager::class)->startRun($session, 'foreman', [
+    $parent = app(AgentSessionManager::class)->startRun($session, 'project_manager', [
         'mode' => 'initial',
         'input' => 'Investigate the request.',
         'sources' => [],
-        'agent_snapshot' => ['role' => 'foreman'],
+        'agent_snapshot' => ['role' => 'project_manager'],
         'prompt_snapshot' => ['work_request_id' => $workRequest->id],
         'role' => 'foreman',
     ]);
@@ -84,8 +84,8 @@ test('candidate approval requires a different Agent and the current candidate SH
         'candidate_sha' => 'candidate-sha',
     ]);
     $sessions = app(AgentSessionManager::class);
-    $coder = $project->agents()->where('role', 'implementation_specialist')->sole();
-    $reviewer = $project->agents()->where('role', 'independent_reviewer')->sole();
+    $coder = $project->agents()->where('role', 'coder')->sole();
+    $reviewer = $project->agents()->where('role', 'qa')->sole();
     $candidateRun = $sessions->startRun($sessions->forSubject($coder, $task), 'implementation', foremanRunContext());
     $reviewerRun = $sessions->startRun($sessions->forSubject($reviewer, $task), 'review', foremanRunContext());
 

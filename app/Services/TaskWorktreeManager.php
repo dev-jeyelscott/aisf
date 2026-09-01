@@ -205,6 +205,25 @@ class TaskWorktreeManager
         }
     }
 
+    /**
+     * A Coder may not create a Git commit until a later, approved finalization turn.
+     */
+    public function assertNoCommitBeforeQa(Task $task): void
+    {
+        $baseSha = (string) $task->base_sha;
+        $worktreePath = (string) $task->worktree_path;
+
+        if ($baseSha === '' || $worktreePath === '' || ! is_dir($worktreePath)) {
+            throw new UnexpectedValueException('The Task worktree baseline is required before QA handoff.');
+        }
+
+        $commits = $this->requiredOutput($worktreePath, ['git', 'rev-list', "{$baseSha}..HEAD"], 'Unable to inspect Task commits before QA.');
+
+        if ($commits !== '') {
+            throw new UnexpectedValueException('The Coder created a commit before QA approval.');
+        }
+    }
+
     public function mergePullRequest(Task $task, string $expectedSha): void
     {
         $this->verifyHeadMatches($task, $expectedSha);

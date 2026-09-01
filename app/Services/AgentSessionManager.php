@@ -84,6 +84,7 @@ class AgentSessionManager
         $agentSnapshot = $context['agent_snapshot'] ?? null;
         $promptSnapshot = $context['prompt_snapshot'] ?? null;
         $role = $context['role'] ?? null;
+        $executionToken = $context['execution_token'] ?? Str::random(64);
 
         if (
             ! is_string($mode)
@@ -93,6 +94,8 @@ class AgentSessionManager
             || ! is_array($sources)
             || ! is_array($agentSnapshot)
             || ! is_array($promptSnapshot)
+            || ! is_string($executionToken)
+            || trim($executionToken) === ''
         ) {
             throw new UnexpectedValueException(
                 'Agent run context must contain a valid mode, submitted input, and context sources.',
@@ -111,6 +114,7 @@ class AgentSessionManager
                 $agentSnapshot,
                 $promptSnapshot,
                 $role,
+                $executionToken,
                 $parent,
             ): AgentRun {
                 $lockedSession = AgentSession::query()
@@ -124,6 +128,7 @@ class AgentSessionManager
                 return $lockedSession->runs()->create([
                     'purpose' => $purpose,
                     'role' => $role,
+                    'execution_token' => $executionToken,
                     'status' => 'running',
                     'attempt' => $attempt,
                     'parent_agent_run_id' => $parent?->getKey(),
@@ -211,6 +216,8 @@ class AgentSessionManager
             $summary = 'Agent execution completed successfully.';
         }
 
+        $run->refresh();
+
         AgentRun::query()
             ->whereKey($run->getKey())
             ->where('status', 'running')
@@ -218,7 +225,7 @@ class AgentSessionManager
                 'status' => 'succeeded',
                 'output_summary' => Str::limit($summary, 2000, ''),
                 'raw_output_reference' => $rawOutputReference,
-                'execution_metadata' => $executionMetadata,
+                'execution_metadata' => array_merge($run->execution_metadata ?? [], $executionMetadata),
                 'exit_code' => $exitCode,
                 'finished_at' => now(),
             ]);

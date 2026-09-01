@@ -8,9 +8,9 @@ class ProjectAgentProvisioner
 {
     /** @var array<string, array{name: string, harness: string}> */
     private const DEFAULT_AGENTS = [
-        'foreman' => ['name' => 'Foreman', 'harness' => 'codex'],
-        'implementation_specialist' => ['name' => 'Implementation Specialist', 'harness' => 'codex'],
-        'independent_reviewer' => ['name' => 'Independent Reviewer', 'harness' => 'claude'],
+        'project_manager' => ['name' => 'Project Manager', 'harness' => 'codex'],
+        'coder' => ['name' => 'Coder', 'harness' => 'codex'],
+        'qa' => ['name' => 'QA', 'harness' => 'claude'],
     ];
 
     public function ensureFor(Project $project): void

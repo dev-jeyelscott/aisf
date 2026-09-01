@@ -7,6 +7,7 @@ use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use JsonException;
 use RuntimeException;
 use Throwable;
@@ -30,6 +31,7 @@ class AgentExecutionRunner
         private readonly AgentSessionManager $sessionManager,
         private readonly TaskWorktreeManager $worktreeManager,
         private readonly AgentPromptComposer $promptComposer,
+        private readonly TaskContextBuilder $taskContextBuilder,
     ) {}
 
     /**
@@ -44,13 +46,6 @@ class AgentExecutionRunner
             ->where('enabled', true)
             ->first();
 
-        if (! $agent instanceof ProjectAgent && $role === 'foreman') {
-            $agent = $project->agents()
-                ->where('role', 'project_manager')
-                ->where('enabled', true)
-                ->first();
-        }
-
         if (! $agent instanceof ProjectAgent) {
             throw new UnexpectedValueException(sprintf(
                 'No enabled %s Agent is configured for this Project.',
@@ -61,7 +56,11 @@ class AgentExecutionRunner
         $session = $this->sessionManager->forSubject($agent, $subject);
         [$repositoryPath, $writable] = $this->executionTarget($subject);
         $promptContext = $this->promptComposer->compose($agent, $subject, $repositoryPath, $operatorInstruction);
-        $prompt = $promptContext['prompt']."\n\n".$this->contractSection($subject, $role);
+        $executionToken = Str::random(64);
+        $prompt = $promptContext['prompt']."\n\n".$this->contractSection($subject, $role)."\n\nACTIVE RUN AUTHORIZATION\nAgent run token: {$executionToken}";
+        if ($subject instanceof Task) {
+            $prompt .= "\n\nDURABLE TASK CONTEXT\n".json_encode($this->taskContextBuilder->forTask($subject), JSON_THROW_ON_ERROR);
+        }
 
         $run = $this->sessionManager->startRun($session, $role, [
             'mode' => 'initial',
@@ -70,6 +69,14 @@ class AgentExecutionRunner
             'agent_snapshot' => $promptContext['snapshot']['agent'],
             'prompt_snapshot' => $promptContext['snapshot'],
             'role' => $role,
+            'execution_token' => $executionToken,
+        ]);
+        $prompt .= "\nAgent run ID: {$run->id}";
+        $run->update([
+            'submitted_input' => $prompt,
+            'execution_metadata' => $subject instanceof Task
+                ? ['accepted_handoff_id' => $subject->last_handoff['id'] ?? null]
+                : [],
         ]);
 
         try {
@@ -290,12 +297,16 @@ class AgentExecutionRunner
     private function roleFor(Task|WorkRequest $subject): string
     {
         if ($subject instanceof WorkRequest) {
-            return 'foreman';
+            return 'project_manager';
         }
 
-        $toRole = $subject->assignedProjectAgent->role ?? ($subject->last_handoff['to_role'] ?? null);
+        $toRole = $subject->last_handoff['to_role'] ?? null;
 
-        return filled($toRole) ? $toRole : 'foreman';
+        if (! filled($toRole)) {
+            throw new UnexpectedValueException('A Task execution requires an accepted durable handoff.');
+        }
+
+        return (string) $toRole;
     }
 
     private function projectFor(Task|WorkRequest $subject): Project
@@ -322,6 +333,17 @@ class AgentExecutionRunner
             return [$project->path, false];
         }
 
+        if ($subject->last_handoff['to_role'] === 'qa') {
+            $this->worktreeManager->ensureWorktree($subject);
+            $subject->refresh();
+
+            return [(string) $subject->worktree_path, false];
+        }
+
+        if ($subject->last_handoff['to_role'] !== 'coder') {
+            return [(string) $this->projectFor($subject)->path, false];
+        }
+
         $this->worktreeManager->ensureWorktree($subject);
         $subject->refresh();
 
@@ -336,17 +358,23 @@ RESPONSE CONTRACT
 Inspect the repository read-only; do not edit, install, run commands that mutate state, or commit.
 Return only one JSON object matching the supplied schema.
 Set "status" to "completed" once you have finished deciding what to do about this request, "waiting" if you need another turn to keep planning, or "failed" if the request cannot be planned.
-Decide for yourself what fields each Task needs — a documentation-only Task needs no acceptance criteria or browser steps. Only include the "tasks" array with one entry per Task you want created (title required; objective, implementation_spec, and depends_on_position — one-based, referencing only an earlier entry — are optional). Leave "tasks" empty or omit it, and set "already_implemented" to true with a concrete reason in "summary", if the requested behavior already exists.
+Decide for yourself what fields each Task needs — a documentation-only Task needs no acceptance criteria or browser steps. Use save_task_plan to persist one or more structured Tasks, then call handoff_task for every dependency-ready Task using to_role "coder" and reason "implementation_ready". Leave "tasks" empty or omit it, and set "already_implemented" to true with a concrete reason in "summary", if the requested behavior already exists.
+PROMPT;
+        }
+
+        if ($role === 'qa') {
+            return <<<'PROMPT'
+RESPONSE CONTRACT
+You have read-only access. Read the durable Task context using get_task_context, inspect the worktree diff and Coder evidence, then save_qa_review and handoff_task. Do not edit files or commit.
+Return only one JSON object matching the supplied schema.
+Set "status" to "completed" when your review handoff has been accepted.
 PROMPT;
         }
 
         return <<<'PROMPT'
 RESPONSE CONTRACT
-You have write access to this isolated Task worktree only. Inspect, edit, run commands, test, and commit as you judge appropriate — there is no fixed process you must follow.
-Return only one JSON object matching the supplied schema.
-Set "status" to "completed" once you consider the assigned work fully done (or judge no further action is needed), "waiting" if you are handing off to another role for another turn, or "failed" if you cannot complete the work.
-If you are handing off, set "handoff" to {"to_role": "...", "note": "..."} describing what the next turn should do. If you committed, set "commit_sha" to the exact commit SHA you created; otherwise leave it null. A different Agent must review a candidate SHA before AISF may automatically merge it; return its structured review in "review".
-Run `composer ci:check` before reporting a commit. AISF independently verifies CI, exact SHA, PR state, independent approval, and merge authorization; it will give the Foreman fresh recovery context if a gate rejects the candidate.
+You have write access only to this isolated Task worktree. First use get_task_context. Implement and test the Task, then use save_task_result and handoff_task to QA. Do not create a Git commit before QA approval.
+Return only one JSON object matching the supplied schema and set "status" to "completed" only after the QA handoff has been accepted.
 PROMPT;
     }
 }

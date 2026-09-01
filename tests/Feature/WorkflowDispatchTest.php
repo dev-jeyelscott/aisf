@@ -125,5 +125,6 @@ function feature10Task(WorkRequest $workRequest, array $overrides = []): Task
         'acceptance_criteria' => [],
         'verification_commands' => [],
         'browser_steps' => [],
+        'last_handoff' => ['to_role' => 'coder'],
     ], $overrides));
 }
