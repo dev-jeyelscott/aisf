@@ -22,7 +22,9 @@ class SaveQaReview extends Tool
      */
     public function handle(Request $request): Response
     {
-        $data = $request->validate(['task_id' => ['required', 'integer'], 'agent_run_id' => ['required', 'integer'], 'execution_token' => ['required', 'string'], 'candidate_sha' => ['required', 'string'], 'status' => ['required', 'in:approved,changes_requested'], 'summary' => ['required', 'string'], 'findings' => ['required', 'array']]);
+        // 'present' not 'required': Laravel's required-family rules treat an empty array as absent,
+        // and a clean QA approval legitimately has zero findings.
+        $data = $request->validate(['task_id' => ['required', 'integer'], 'agent_run_id' => ['required', 'integer'], 'execution_token' => ['required', 'string'], 'candidate_sha' => ['required', 'string'], 'status' => ['required', 'in:approved,changes_requested'], 'summary' => ['required', 'string'], 'findings' => ['present', 'array']]);
 
         return Response::json(app(TaskWorkflowService::class)->saveReview(AgentRun::query()->whereKey($data['agent_run_id'])->sole(), Task::query()->whereKey($data['task_id'])->sole(), $data['candidate_sha'], $data['status'], $data['summary'], $data['findings'], $data['execution_token'])->toArray());
     }

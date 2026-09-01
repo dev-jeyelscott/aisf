@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use JsonException;
@@ -264,10 +265,22 @@ class AgentExecutionRunner
             'review.candidate_sha' => ['required_with:review', 'string'],
             'review.status' => ['required_with:review', 'string', 'in:approved,changes_requested'],
             'review.summary' => ['required_with:review', 'string'],
-            'review.findings' => ['required_with:review', 'array'],
+            // Not required_with: Laravel's required-family rules treat an empty array as absent, and
+            // an approved review with zero findings is the normal, common case — rejecting it would
+            // make every clean approval fail this contract.
+            'review.findings' => ['nullable', 'array'],
         ]);
 
         if ($validator->fails()) {
+            // The completion contract itself carries no secrets (it is exactly the structured shape
+            // the Agent was asked to return), so log which rules failed and a bounded preview to make
+            // an otherwise invisible contract violation diagnosable, without retaining a full provider
+            // transcript.
+            Log::warning('Agent completion failed the minimal contract.', [
+                'errors' => $validator->errors()->toArray(),
+                'output_preview' => Str::limit($output, 4000),
+            ]);
+
             throw new UnexpectedValueException(
                 'The Agent response does not satisfy the minimal completion contract (status, summary).',
             );

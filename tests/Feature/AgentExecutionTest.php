@@ -113,6 +113,30 @@ test('PM already-implemented completion marks the WorkRequest completed without 
         ->and($workRequest->tasks()->count())->toBe(0);
 });
 
+test('a completion reporting an approved review with zero findings is accepted', function () {
+    [, , $task] = feature09TaskFixture();
+    feature09FakeHarness(feature09Completion([
+        'status' => 'failed',
+        'summary' => 'Reporting a zero-finding review must not itself break the completion contract.',
+        'review' => [
+            'candidate_sha' => 'deadbeef',
+            'status' => 'approved',
+            'summary' => 'No blocking issues found.',
+            'findings' => [],
+        ],
+    ]));
+
+    app()->call([new ProcessAgentExecution($task), 'handle']);
+
+    $task->refresh();
+
+    // Laravel's required/required_with rules treat an empty array as absent, which used to reject
+    // this exact shape -- a clean approval with no findings -- and mask it behind the generic
+    // "does not satisfy the minimal completion contract" error instead of the Agent's real summary.
+    expect($task->status)->toBe('failed')
+        ->and($task->blocked_reason)->toBe('Reporting a zero-finding review must not itself break the completion contract.');
+});
+
 test('a Task cannot execute without a durable PM handoff', function () {
     [, , $task] = feature09TaskFixture();
     feature09FakeHarness(feature09Completion([
