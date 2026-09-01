@@ -71,6 +71,7 @@ class TaskWorktreeManager
         }
 
         $this->seedInstalledDependencies($repositoryPath, $worktreePath);
+        $this->skipWorktreeForTrackedLocalState($worktreePath);
 
         $task->update([
             'base_branch' => $status['branch'],
@@ -115,6 +116,55 @@ class TaskWorktreeManager
             File::ensureDirectoryExists(dirname($destination));
             File::copy($source, $destination);
         }
+    }
+
+    /**
+     * Some Projects commit their local SQLite database into Git (rather than gitignoring it), so
+     * running migrations or tests inside a Task worktree leaves it "modified" even though no Agent
+     * touched it intentionally. That noise pollutes `git status`/`git diff` and confuses the Agent's
+     * own report of what it changed, so mark every tracked SQLite file `--skip-worktree`: Git then
+     * ignores local writes to it for status/diff purposes without altering the pristine checked-out
+     * committed content or the Project's own repository.
+     */
+    private function skipWorktreeForTrackedLocalState(string $worktreePath): void
+    {
+        $tracked = $this->run($worktreePath, ['git', 'ls-files']);
+
+        if ($tracked === null || $tracked->failed()) {
+            return;
+        }
+
+        $paths = array_filter(preg_split('/\R/u', trim($tracked->output())) ?: [], fn (string $path): bool => $path !== '');
+
+        foreach ($paths as $path) {
+            if (! $this->looksLikeSqliteDatabase("{$worktreePath}/{$path}")) {
+                continue;
+            }
+
+            $this->run($worktreePath, ['git', 'update-index', '--skip-worktree', $path]);
+        }
+    }
+
+    /**
+     * Sniff the SQLite file-format magic header rather than trusting a filename or extension, since a
+     * committed local database is not guaranteed to be named `*.sqlite`.
+     */
+    private function looksLikeSqliteDatabase(string $path): bool
+    {
+        if (! is_file($path)) {
+            return false;
+        }
+
+        $handle = fopen($path, 'rb');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        $header = fread($handle, 16);
+        fclose($handle);
+
+        return is_string($header) && str_starts_with($header, "SQLite format 3\x00");
     }
 
     /**

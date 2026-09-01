@@ -148,6 +148,32 @@ test('ensureWorktree recovers from a stale branch and worktree left by a previou
         ->and(is_dir($worktreePath))->toBeTrue();
 });
 
+test('ensureWorktree marks a tracked local SQLite database skip-worktree so Agent writes do not pollute status', function () {
+    [$project, , $task] = feature09TaskFixture();
+    $repositoryPath = $project->path;
+
+    // Some Projects commit their local SQLite database (like the real miseledger repo) instead of
+    // gitignoring it, so a fresh worktree checks it out as a tracked file under an arbitrary name.
+    File::put($repositoryPath.'/app.sqlite', "SQLite format 3\x00".str_repeat("\x00", 100));
+    Process::path($repositoryPath)->run(['git', 'add', 'app.sqlite'])->throw();
+    Process::path($repositoryPath)->run([
+        'git', '-c', 'user.name=AISF Tests', '-c', 'user.email=aisf-tests@example.test',
+        'commit', '-m', 'chore: track local database',
+    ])->throw();
+
+    app(TaskWorktreeManager::class)->ensureWorktree($task);
+    $task->refresh();
+    $worktreePath = (string) $task->worktree_path;
+
+    // Simulate an Agent running migrations/tests, which writes to the tracked database as a
+    // side effect without intending it as part of the Task's diff.
+    File::put($worktreePath.'/app.sqlite', "SQLite format 3\x00".str_repeat("\x01", 100));
+
+    $status = Process::path($worktreePath)->run(['git', 'status', '--porcelain'])->output();
+
+    expect(trim($status))->toBe('');
+});
+
 test('a Coder completion with a reported commit SHA is deferred to Phase 7', function () {
     [, , $task] = feature09TaskFixture();
 
