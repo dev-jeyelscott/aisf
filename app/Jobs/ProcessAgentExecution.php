@@ -29,9 +29,11 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
     public int $timeout = 0;
 
     /**
-     * Allow the initial attempt plus two automatic retries for transient infrastructure failures.
+     * TEMPORARY: retries disabled while we root-cause repeated Task 1 failures -- each attempt was
+     * being auto-retried up to 3x before it could be inspected, burning Agent runs and hiding the
+     * actual failure behind the next attempt. Restore to 3 once one Task runs end-to-end cleanly.
      */
-    public int $tries = 3;
+    public int $tries = 1;
 
     public int $backoff = 5;
 
