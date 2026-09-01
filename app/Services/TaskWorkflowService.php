@@ -223,7 +223,7 @@ class TaskWorkflowService
     public function saveReview(
         AgentRun $run,
         Task $task,
-        string $candidateSha,
+        string $candidateTreeSha,
         string $status,
         string $summary,
         array $findings,
@@ -245,7 +245,7 @@ class TaskWorkflowService
             $task,
             $candidateRun,
             $run,
-            $candidateSha,
+            $candidateTreeSha,
             $status,
             $summary,
             $findings,
@@ -442,6 +442,12 @@ class TaskWorkflowService
                         'payload' => $payload,
                     ],
                 ]);
+
+                $this->actionRecorder->record(
+                    $run,
+                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                    $locked,
+                );
 
                 return $handoff;
             }

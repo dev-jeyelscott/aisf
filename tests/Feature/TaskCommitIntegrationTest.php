@@ -3,17 +3,21 @@
 use App\Jobs\DispatchWorkflowForProject;
 use App\Jobs\ProcessAgentExecution;
 use App\Models\AgentRun;
+use App\Models\AgentRunAction;
 use App\Models\Project;
 use App\Models\Task;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
+use App\Services\AgentTurnExecution;
+use App\Services\AgentTurnReconciler;
 use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
 use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
+use App\Services\WorkflowDispatcher;
 use Illuminate\Support\Facades\Queue;
 use UnexpectedValueException;
 
@@ -27,7 +31,7 @@ test('QA cannot approve a candidate it produced itself', function () {
         ->toThrow(UnexpectedValueException::class);
 });
 
-test('a review may only evaluate the Task current candidate SHA', function () {
+test('a review may only evaluate the Task current candidate tree SHA', function () {
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
     $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $coderRun->id]);
     $qaAgent = $project->agents()->where('role', 'qa')->sole();
@@ -37,6 +41,42 @@ test('a review may only evaluate the Task current candidate SHA', function () {
 
     expect(fn () => app(CandidateAcceptanceGate::class)->recordReview($task, $coderRun, $qaRun, 'stale-sha', 'approved', 'Looks fine.', []))
         ->toThrow(UnexpectedValueException::class);
+});
+
+test('new QA reviews bind only to the candidate tree and allow clean approvals', function () {
+    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
+    $task->update([
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
+    ]);
+    $qaAgent = $project->agents()->where('role', 'qa')->sole();
+    $qaRun = app(AgentSessionManager::class)->startRun(
+        app(AgentSessionManager::class)->forSubject($qaAgent, $task),
+        'qa',
+        [
+            'mode' => 'initial',
+            'input' => 'Review.',
+            'sources' => [],
+            'agent_snapshot' => [],
+            'prompt_snapshot' => [],
+            'role' => 'qa',
+        ],
+    );
+
+    $review = app(CandidateAcceptanceGate::class)->recordReview(
+        $task,
+        $coderRun,
+        $qaRun,
+        'candidate-1',
+        'approved',
+        'No blocking issues.',
+        [],
+    );
+
+    expect($review->candidate_tree_sha)->toBe('candidate-1')
+        ->and($review->candidate_sha)->toBeNull()
+        ->and($review->status)->toBe('approved')
+        ->and($review->findings)->toBe([]);
 });
 
 test('the current approval gate uses the latest review of the candidate', function () {
@@ -56,6 +96,52 @@ test('the current approval gate uses the latest review of the candidate', functi
         'mode' => 'initial', 'input' => 'Review again.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
     ]);
     $gate->recordReview($task, $coderRun, $secondReview, 'candidate-1', 'approved', 'Looks good now.', []);
+    expect($gate->hasCurrentApproval($task->refresh()))->toBeTrue();
+});
+
+test('the current approval gate ignores legacy candidate SHA values', function () {
+    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
+    $task->update([
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
+    ]);
+    $qaAgent = $project->agents()->where('role', 'qa')->sole();
+    $qaRun = app(AgentSessionManager::class)->startRun(
+        app(AgentSessionManager::class)->forSubject($qaAgent, $task),
+        'qa',
+        [
+            'mode' => 'initial',
+            'input' => 'Review legacy evidence.',
+            'sources' => [],
+            'agent_snapshot' => [],
+            'prompt_snapshot' => [],
+            'role' => 'qa',
+        ],
+    );
+    $gate = app(CandidateAcceptanceGate::class);
+
+    $task->candidateReviews()->create([
+        'candidate_agent_run_id' => $coderRun->id,
+        'reviewer_agent_run_id' => $qaRun->id,
+        'candidate_sha' => 'candidate-1',
+        'candidate_tree_sha' => 'stale-tree',
+        'status' => 'approved',
+        'summary' => 'Legacy SHA happens to match the current tree text.',
+        'findings' => [],
+    ]);
+
+    expect($gate->hasCurrentApproval($task->refresh()))->toBeFalse();
+
+    $gate->recordReview(
+        $task,
+        $coderRun,
+        $qaRun,
+        'candidate-1',
+        'approved',
+        'The current tree is approved.',
+        [],
+    );
+
     expect($gate->hasCurrentApproval($task->refresh()))->toBeTrue();
 });
 
@@ -162,9 +248,11 @@ test('a commit that fails CI hands the Task back to the Coder instead of opening
         ->and($fresh->pull_request_url)->toBeNull();
 });
 
-test('CI failure durably fails the Task once the repair cycle limit is exceeded', function () {
+test('CI repair-limit failure remains terminal through reconciliation and cannot requeue the Coder', function () {
     config(['aisf.max_repair_cycles' => 0]);
-    [, $task, $coderRun] = taskWithApprovedCandidate();
+    Queue::fake([ProcessAgentExecution::class]);
+    [$project, $task, $coderRun] = taskWithApprovedCandidate();
+
     mock(TaskWorktreeManager::class)
         ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
         ->shouldReceive('verifyHeadMatches')->once()
@@ -173,12 +261,44 @@ test('CI failure durably fails the Task once the repair cycle limit is exceeded'
         ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
         ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token);
+    app(TaskCommitIntegrator::class)->finalize(
+        $task,
+        $coderRun,
+        'commit-sha-1',
+        'Implemented the change.',
+        $coderRun->execution_token,
+    );
 
-    $fresh = $task->refresh();
-    expect($fresh->status)->toBe('failed')
-        ->and($fresh->outcome)->toBe('blocked')
-        ->and($fresh->blocked_reason)->toContain('repair cycle limit');
+    $reconciliation = app(AgentTurnReconciler::class)->reconcile(
+        $task->refresh(),
+        new AgentTurnExecution(
+            $coderRun,
+            new AgentHarnessResult(true, '', null, 0),
+            'CI repair limit exceeded.',
+        ),
+    );
+
+    app(WorkflowDispatcher::class)->dispatchForProject($project);
+
+    $freshTask = $task->refresh();
+    $freshRun = $coderRun->refresh();
+    $terminalActions = $freshRun->actions()
+        ->where('action', AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED)
+        ->get();
+
+    expect($freshTask->status)->toBe('failed')
+        ->and($freshTask->outcome)->toBe('blocked')
+        ->and($freshTask->blocked_reason)->toContain('repair cycle limit')
+        ->and($freshTask->protocol_recovery_count)->toBe(0)
+        ->and($reconciliation->classification)->toBe('terminal')
+        ->and($reconciliation->failureClass)->toBe('terminal_blocked')
+        ->and($freshRun->reconciliation_status)->toBe('terminal')
+        ->and($freshRun->failure_class)->toBe('terminal_blocked')
+        ->and($terminalActions)->toHaveCount(1)
+        ->and($terminalActions->sole()->resource_type)->toBe(AgentRunAction::RESOURCE_TASK)
+        ->and($terminalActions->sole()->resource_id)->toBe($freshTask->id);
+
+    Queue::assertNotPushed(ProcessAgentExecution::class);
 });
 
 test('QA repair handoffs durably fail the Task once the repair cycle limit is exceeded', function () {
@@ -193,10 +313,25 @@ test('QA repair handoffs durably fail the Task once the repair cycle limit is ex
 
     app(TaskWorkflowService::class)->handoff($qaRun, $task, 'coder', 'changes_requested', 'qa-repair-1', [], $qaRun->execution_token);
 
+    $reconciliation = app(AgentTurnReconciler::class)->reconcile(
+        $task->refresh(),
+        new AgentTurnExecution(
+            $qaRun,
+            new AgentHarnessResult(true, '', null, 0),
+            'QA repair limit exceeded.',
+        ),
+    );
+
     $fresh = $task->refresh();
     expect($fresh->status)->toBe('failed')
         ->and($fresh->outcome)->toBe('blocked')
-        ->and($fresh->blocked_reason)->toContain('repair cycle limit');
+        ->and($fresh->blocked_reason)->toContain('repair cycle limit')
+        ->and($fresh->protocol_recovery_count)->toBe(0)
+        ->and($reconciliation->classification)->toBe('terminal')
+        ->and($reconciliation->failureClass)->toBe('terminal_blocked')
+        ->and($qaRun->refresh()->actions()
+            ->where('action', AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED)
+            ->count())->toBe(1);
 });
 
 test('completing an Agent execution immediately triggers the next dispatch attempt', function () {
@@ -212,13 +347,18 @@ test('completing an Agent execution immediately triggers the next dispatch attem
     Queue::assertPushed(DispatchWorkflowForProject::class, fn (DispatchWorkflowForProject $job) => $job->projectId === $project->id);
 });
 
-/** @return array{0: Project, 1: Task, 2: AgentRun, 3: AgentRun} */
-function taskWithApprovedCandidate(string $candidateSha = 'candidate-1'): array
+/**
+ * Build a Task with a current tree-bound QA approval and an active approved Coder finalization run.
+ *
+ * @return array{0: Project, 1: Task, 2: AgentRun, 3: AgentRun}
+ */
+function taskWithApprovedCandidate(string $candidateTreeSha = 'candidate-1'): array
 {
     [$project, $task, $candidateRun] = taskRoleHandoffFixture('coder');
+    $task->workRequest()->update(['status' => 'waiting']);
     $task->update([
         'status' => 'running',
-        'candidate_tree_sha' => $candidateSha,
+        'candidate_tree_sha' => $candidateTreeSha,
         'candidate_created_by_run_id' => $candidateRun->id,
         'candidate_kind' => 'changes',
     ]);
@@ -226,7 +366,7 @@ function taskWithApprovedCandidate(string $candidateSha = 'candidate-1'): array
     $qaRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($qaAgent, $task), 'qa', [
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
     ]);
-    app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $qaRun, $candidateSha, 'approved', 'Looks good.', []);
+    app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $qaRun, $candidateTreeSha, 'approved', 'Looks good.', []);
     $handoff = app(TaskWorkflowService::class)->handoff(
         $qaRun,
         $task,

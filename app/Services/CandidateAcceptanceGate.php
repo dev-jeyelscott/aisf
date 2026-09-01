@@ -27,7 +27,7 @@ class CandidateAcceptanceGate
         Task $task,
         AgentRun $candidateRun,
         AgentRun $reviewerRun,
-        string $candidateSha,
+        string $candidateTreeSha,
         string $status,
         string $summary,
         array $findings,
@@ -36,7 +36,7 @@ class CandidateAcceptanceGate
             $task,
             $candidateRun,
             $reviewerRun,
-            $candidateSha,
+            $candidateTreeSha,
             $status,
             $summary,
             $findings,
@@ -60,7 +60,7 @@ class CandidateAcceptanceGate
                 );
             }
 
-            if ($task->candidate_tree_sha !== $candidateSha) {
+            if ($task->candidate_tree_sha !== $candidateTreeSha) {
                 throw new UnexpectedValueException(
                     'A review may only evaluate the Task’s current immutable candidate tree SHA.',
                 );
@@ -87,8 +87,7 @@ class CandidateAcceptanceGate
             $review = $task->candidateReviews()->create([
                 'candidate_agent_run_id' => $candidateRun->id,
                 'reviewer_agent_run_id' => $reviewerRun->id,
-                'candidate_sha' => $candidateSha,
-                'candidate_tree_sha' => $candidateSha,
+                'candidate_tree_sha' => $candidateTreeSha,
                 'status' => $status,
                 'summary' => $summary,
                 'findings' => $findings,

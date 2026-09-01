@@ -171,6 +171,7 @@ class TaskCommitIntegrator
                     'failure_reason' => null,
                     'last_handoff' => null,
                 ]);
+
                 $this->actionRecorder->record(
                     $coderRun,
                     AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
@@ -210,6 +211,12 @@ class TaskCommitIntegrator
                     'outcome' => 'blocked',
                     'blocked_reason' => "The Task exceeded its repair cycle limit ({$limit}) after a CI failure and requires operator review.",
                 ]);
+
+                $this->actionRecorder->record(
+                    $coderRun,
+                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                    $locked,
+                );
 
                 return;
             }
