@@ -20,7 +20,7 @@ class ProcessAgentExecution implements ShouldBeUnique, ShouldQueue
 
     public int $timeout = 0;
 
-    public int $tries = 3;
+    public int $tries = 1;
 
     public int $uniqueFor = 300;
 
