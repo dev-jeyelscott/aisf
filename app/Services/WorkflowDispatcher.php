@@ -25,9 +25,16 @@ class WorkflowDispatcher
             return;
         }
 
+        $this->completeFinishedWorkRequests($project);
+
         $workRequest = WorkRequest::query()
             ->where('project_id', $project->id)
-            ->whereIn('status', ['pending', 'waiting'])
+            ->where(function ($query): void {
+                $query->where('status', 'pending')
+                    ->orWhere(function ($query): void {
+                        $query->where('status', 'waiting')->whereDoesntHave('tasks');
+                    });
+            })
             ->oldest('id')
             ->first();
 
@@ -50,7 +57,40 @@ class WorkflowDispatcher
 
         if ($task !== null) {
             $this->claimAndDispatch($task);
+
+            return;
         }
+
+        $dependencyHandoff = WorkRequest::query()
+            ->where('project_id', $project->id)
+            ->where('status', 'waiting')
+            ->with(['tasks.dependsOn'])
+            ->oldest('id')
+            ->get()
+            ->first(fn (WorkRequest $request): bool => $request->tasks->contains(
+                fn (Task $plannedTask): bool => $plannedTask->status !== 'completed'
+                    && $plannedTask->last_handoff === null
+                    && ($plannedTask->depends_on_task_id === null || $plannedTask->dependsOn?->status === 'completed'),
+            ));
+
+        if ($dependencyHandoff !== null) {
+            $this->claimAndDispatch($dependencyHandoff);
+        }
+    }
+
+    private function completeFinishedWorkRequests(Project $project): void
+    {
+        WorkRequest::query()
+            ->where('project_id', $project->id)
+            ->where('status', 'waiting')
+            ->whereHas('tasks')
+            ->whereDoesntHave('tasks', fn ($query) => $query->where('status', '!=', 'completed'))
+            ->update([
+                'status' => 'completed',
+                'outcome' => 'implemented',
+                'failure_reason' => null,
+                'last_handoff' => null,
+            ]);
     }
 
     private function hasActiveExecution(Project $project): bool

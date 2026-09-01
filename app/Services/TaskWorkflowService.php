@@ -26,6 +26,7 @@ class TaskWorkflowService
         private readonly AgentSessionManager $sessionManager,
         private readonly RepairCycleGuard $repairCycleGuard,
         private readonly AgentRunActionRecorder $actionRecorder,
+        private readonly TaskCandidateFingerprint $candidateFingerprint,
     ) {}
 
     /**
@@ -163,6 +164,7 @@ class TaskWorkflowService
         $task->refresh();
 
         $this->worktreeManager->assertNoCommitBeforeQa($task);
+        $fingerprint = $this->candidateFingerprint->forTask($task);
 
         $artifacts = [
             'summary' => (string) ($result['summary'] ?? ''),
@@ -180,26 +182,36 @@ class TaskWorkflowService
             $task,
             $result,
             $artifacts,
+            $fingerprint,
         ): array {
+            $locked = Task::query()->lockForUpdate()->findOrFail($task->id);
+            $candidateArtifacts = [
+                ...$artifacts,
+                'candidate_tree_sha' => $fingerprint['tree_sha'],
+                'candidate_kind' => $fingerprint['kind'],
+            ];
+
             $run->update([
-                'artifacts' => $artifacts,
+                'artifacts' => $candidateArtifacts,
                 'execution_metadata' => array_merge(
                     $run->execution_metadata ?? [],
                     ['structured_result' => $result],
                 ),
             ]);
 
-            $task->update([
-                'candidate_sha' => $task->base_sha,
+            $locked->update([
+                'candidate_tree_sha' => $fingerprint['tree_sha'],
+                'candidate_created_by_run_id' => $run->id,
+                'candidate_kind' => $fingerprint['kind'],
             ]);
 
             $this->actionRecorder->record(
                 $run,
                 AgentRunAction::ACTION_TASK_RESULT_SAVED,
-                $task,
+                $locked,
             );
 
-            return $artifacts;
+            return $candidateArtifacts;
         }, attempts: 3);
     }
 
@@ -219,17 +231,9 @@ class TaskWorkflowService
     ): CandidateReview {
         $this->assertActiveRun($run, $task, 'qa', $executionToken);
 
-        $candidateRun = $task->agentSessions()
-            ->whereHas(
-                'projectAgent',
-                fn ($query) => $query->where('role', 'coder'),
-            )
-            ->with('runs')
-            ->get()
-            ->flatMap(fn ($session) => $session->runs)
-            ->where('status', 'succeeded')
-            ->sortByDesc('id')
-            ->first();
+        $candidateRun = filled($task->candidate_created_by_run_id)
+            ? AgentRun::query()->find($task->candidate_created_by_run_id)
+            : null;
 
         if (! $candidateRun instanceof AgentRun) {
             throw new UnexpectedValueException(
@@ -335,6 +339,29 @@ class TaskWorkflowService
             }
 
             $this->worktreeManager->assertNoCommitBeforeQa($task);
+
+            if (
+                (int) $task->candidate_created_by_run_id !== (int) $run->id
+                || ! filled($task->candidate_tree_sha)
+            ) {
+                throw new UnexpectedValueException(
+                    'The Coder may hand off only the candidate produced by this run to QA.',
+                );
+            }
+        }
+
+        if ($fromRole === 'qa') {
+            $review = $task->candidateReviews()
+                ->where('reviewer_agent_run_id', $run->id)
+                ->where('candidate_tree_sha', $task->candidate_tree_sha)
+                ->latest('id')
+                ->first();
+
+            if ($review === null || $review->status !== $reason) {
+                throw new UnexpectedValueException(
+                    'The QA handoff reason must match this run’s review of the current candidate.',
+                );
+            }
         }
 
         return DB::transaction(function () use (
@@ -406,6 +433,7 @@ class TaskWorkflowService
 
                 $locked->update([
                     'status' => 'failed',
+                    'outcome' => 'blocked',
                     'blocked_reason' => "The Task exceeded its QA repair cycle limit ({$limit}) and requires operator review.",
                     'last_handoff' => [
                         'id' => $handoff->id,

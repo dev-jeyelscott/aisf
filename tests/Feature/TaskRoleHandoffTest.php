@@ -4,10 +4,10 @@ use App\Console\Commands\DispatchWorkflow;
 use App\Jobs\ProcessAgentExecution;
 use App\Models\Project;
 use App\Models\WorkRequest;
-use App\Services\AgentHarness;
-use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
+use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
+use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskContextBuilder;
 use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
@@ -20,6 +20,11 @@ test('a handoff is durable and idempotent for an active configured Agent run', f
     [$project, $task, $run] = taskRoleHandoffFixture('coder');
     $task->update(['base_sha' => 'base-sha', 'worktree_path' => '/tmp/aisf-task-worktree']);
     $run->update(['artifacts' => ['validation' => []]]);
+    $task->update([
+        'candidate_tree_sha' => 'candidate-tree-1',
+        'candidate_created_by_run_id' => $run->id,
+        'candidate_kind' => 'changes',
+    ]);
     mock(TaskWorktreeManager::class)->shouldReceive('assertNoCommitBeforeQa')->once();
 
     $service = app(TaskWorkflowService::class);
@@ -66,32 +71,25 @@ test('a Project Manager plan persists Tasks before creating Coder handoffs', fun
     $project = Project::factory()->create();
     app(ProjectAgentProvisioner::class)->ensureFor($project);
     $workRequest = $project->workRequests()->create(['prompt' => 'Plan this change.', 'status' => 'pending']);
-    $output = json_encode([
-        'status' => 'completed',
-        'summary' => 'Created the implementation plan.',
-        'tasks' => [[
-            'title' => 'Implement the change',
-            'objective' => 'Deliver the requested behavior.',
-            'implementation_spec' => 'Follow existing conventions.',
-            'acceptance_criteria' => ['The behavior works.'],
-            'verification_commands' => ['vendor/bin/pest'],
-            'browser_steps' => [],
-            'depends_on_position' => null,
-            'assigned_agent_role' => null,
-        ]],
-    ], JSON_THROW_ON_ERROR);
-    mock(AgentHarness::class)
-        ->shouldReceive('start')
-        ->once()
-        ->andReturn(new AgentHarnessResult(true, $output, null, 0));
+    $pm = $project->agents()->where('role', 'project_manager')->sole();
+    $run = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($pm, $workRequest), 'project_manager', [
+        'mode' => 'initial', 'input' => 'Plan.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'project_manager',
+    ]);
+    $task = app(TaskWorkflowService::class)->savePlan($run, $workRequest, [[
+        'title' => 'Implement the change',
+        'objective' => 'Deliver the requested behavior.',
+        'implementation_spec' => 'Follow existing conventions.',
+        'acceptance_criteria' => ['The behavior works.'],
+        'verification_commands' => ['vendor/bin/pest'],
+        'browser_steps' => [],
+        'depends_on_position' => null,
+    ]], $run->execution_token)[0];
+    app(TaskWorkflowService::class)->handoff($run, $task, 'coder', 'implementation_ready', 'pm-coder-1', [], $run->execution_token);
 
-    app()->call([new ProcessAgentExecution($workRequest), 'handle']);
-
-    $task = $workRequest->refresh()->tasks()->sole();
-    expect($workRequest->status)->toBe('completed')
-        ->and($task->status)->toBe('pending')
-        ->and($task->last_handoff)->toBeNull()
-        ->and($task->handoffs()->count())->toBe(0)
+    expect($workRequest->refresh()->status)->toBe('pending')
+        ->and($task->refresh()->status)->toBe('waiting')
+        ->and($task->last_handoff['reason'])->toBe('implementation_ready')
+        ->and($task->handoffs()->count())->toBe(1)
         ->and($task->agentSessions()->with('projectAgent')->get()->pluck('projectAgent.role')->sort()->values()->all())->toBe(['coder', 'qa']);
 });
 
@@ -178,6 +176,11 @@ test('a Coder result records structured evidence without committing before QA', 
         ->shouldReceive('ensureWorktree')->once()
         ->shouldReceive('assertNoCommitBeforeQa')->once()
         ->shouldReceive('changedFiles')->once()->andReturn(['app/Services/Example.php']);
+    mock(TaskCandidateFingerprint::class)->shouldReceive('forTask')->once()->andReturn([
+        'tree_sha' => 'candidate-tree-1',
+        'base_tree_sha' => 'base-tree',
+        'kind' => 'changes',
+    ]);
 
     $artifacts = app(TaskWorkflowService::class)->saveResult($run, $task, [
         'summary' => 'Implemented the requested behavior.',
@@ -188,7 +191,7 @@ test('a Coder result records structured evidence without committing before QA', 
 
     expect($artifacts['changed_files'])->toBe(['app/Services/Example.php'])
         ->and($run->refresh()->artifacts['summary'])->toBe('Implemented the requested behavior.')
-        ->and($task->refresh()->candidate_sha)->toBe('base-sha');
+        ->and($task->refresh()->candidate_tree_sha)->toBe('candidate-tree-1');
 });
 
 test('task context cannot be read by an Agent run from another Project', function () {
@@ -200,7 +203,15 @@ test('task context cannot be read by an Agent run from another Project', functio
 });
 
 test('a Coder repair turn receives the newest durable QA findings', function () {
-    [, $task, $qaRun] = taskRoleHandoffFixture('qa');
+    [$project, $task, $qaRun] = taskRoleHandoffFixture('qa');
+    $coder = $project->agents()->where('role', 'coder')->sole();
+    $candidateRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($coder, $task), 'coder', [
+        'mode' => 'initial', 'input' => 'Implement.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'coder',
+    ]);
+    $task->update(['candidate_tree_sha' => 'candidate-tree-1', 'candidate_created_by_run_id' => $candidateRun->id]);
+    app(CandidateAcceptanceGate::class)->recordReview(
+        $task, $candidateRun, $qaRun, 'candidate-tree-1', 'changes_requested', 'Needs repair.', ['Handle the empty result.'],
+    );
     $handoff = app(TaskWorkflowService::class)->handoff(
         $qaRun,
         $task,
@@ -210,7 +221,6 @@ test('a Coder repair turn receives the newest durable QA findings', function () 
         ['findings' => ['Handle the empty result.']],
         $qaRun->execution_token,
     );
-    $coder = $task->workRequest->project->agents()->where('role', 'coder')->sole();
     $coderRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($coder, $task), 'coder', [
         'mode' => 'initial',
         'input' => 'Repair the Task.',

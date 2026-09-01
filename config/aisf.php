@@ -35,4 +35,16 @@ return [
 
     'max_repair_cycles' => (int) env('AISF_MAX_REPAIR_CYCLES', 5),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum Protocol Recoveries
+    |--------------------------------------------------------------------------
+    |
+    | Missing durable postconditions receive fresh Agent turns without consuming
+    | QA/CI engineering repair cycles or infrastructure queue retries.
+    |
+    */
+
+    'max_protocol_recoveries' => (int) env('AISF_MAX_PROTOCOL_RECOVERIES', 2),
+
 ];

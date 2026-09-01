@@ -10,6 +10,7 @@ use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
 use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
+use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
@@ -20,7 +21,7 @@ use function Pest\Laravel\mock;
 
 test('QA cannot approve a candidate it produced itself', function () {
     [, $task, $run] = taskRoleHandoffFixture('coder');
-    $task->update(['candidate_sha' => 'candidate-1']);
+    $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $run->id]);
 
     expect(fn () => app(CandidateAcceptanceGate::class)->recordReview($task, $run, $run, 'candidate-1', 'approved', 'Looks fine.', []))
         ->toThrow(UnexpectedValueException::class);
@@ -28,7 +29,7 @@ test('QA cannot approve a candidate it produced itself', function () {
 
 test('a review may only evaluate the Task current candidate SHA', function () {
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
-    $task->update(['candidate_sha' => 'candidate-1']);
+    $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $coderRun->id]);
     $qaAgent = $project->agents()->where('role', 'qa')->sole();
     $qaRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($qaAgent, $task), 'qa', [
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
@@ -40,7 +41,7 @@ test('a review may only evaluate the Task current candidate SHA', function () {
 
 test('the current approval gate uses the latest review of the candidate', function () {
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
-    $task->update(['candidate_sha' => 'candidate-1']);
+    $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $coderRun->id]);
     $qaAgent = $project->agents()->where('role', 'qa')->sole();
     $qaSession = app(AgentSessionManager::class)->forSubject($qaAgent, $task);
     $gate = app(CandidateAcceptanceGate::class);
@@ -58,11 +59,31 @@ test('the current approval gate uses the latest review of the candidate', functi
     expect($gate->hasCurrentApproval($task->refresh()))->toBeTrue();
 });
 
+test('changes requested requires at least one non-empty finding', function () {
+    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
+    $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $coderRun->id]);
+    $qaAgent = $project->agents()->where('role', 'qa')->sole();
+    $qaRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($qaAgent, $task), 'qa', [
+        'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
+    ]);
+
+    expect(fn () => app(CandidateAcceptanceGate::class)->recordReview(
+        $task, $coderRun, $qaRun, 'candidate-1', 'changes_requested', 'Needs fixes.', ['  '],
+    ))->toThrow(UnexpectedValueException::class);
+});
+
 test('a Coder may not finalize a commit without a current QA approval', function () {
     [, $task, $coderRun] = taskRoleHandoffFixture('coder');
-    $task->update(['candidate_sha' => 'candidate-1']);
+    $task->update([
+        'status' => 'running',
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
+        'candidate_kind' => 'changes',
+        'last_handoff' => ['id' => 99, 'to_role' => 'coder', 'reason' => 'approved'],
+    ]);
+    $coderRun->update(['execution_metadata' => ['accepted_handoff_id' => 99, 'execution_mode' => 'approved']]);
 
-    expect(fn () => app(TaskCommitIntegrator::class)->integrate($task, $coderRun, 'deadbeef', 'Implemented the change.'))
+    expect(fn () => app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'deadbeef', 'Implemented the change.', $coderRun->execution_token))
         ->toThrow(UnexpectedValueException::class);
 });
 
@@ -73,14 +94,51 @@ test('a verified commit that passes CI completes the Task and opens a pull reque
         ->shouldReceive('verifyHeadMatches')->once()
         ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'output' => ''])
         ->shouldReceive('pushAndOpenPullRequest')->once()->andReturn(['commit_sha' => 'commit-sha-1', 'pull_request_url' => 'https://github.com/org/repo/pull/1']);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->integrate($task, $coderRun, 'commit-sha-1', 'Implemented the change.');
+    app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token);
 
     $fresh = $task->refresh();
     expect($fresh->status)->toBe('completed')
         ->and($fresh->commit_sha)->toBe('commit-sha-1')
+        ->and($fresh->outcome)->toBe('implemented')
         ->and($fresh->pull_request_url)->toBe('https://github.com/org/repo/pull/1')
         ->and($fresh->last_handoff)->toBeNull();
+});
+
+test('code changes after QA approval are rejected before finalization', function () {
+    [, $task, $coderRun] = taskWithApprovedCandidate();
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('different-tree');
+
+    expect(fn () => app(TaskCommitIntegrator::class)->finalize(
+        $task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token,
+    ))->toThrow(UnexpectedValueException::class);
+
+    expect($task->refresh()->status)->toBe('running');
+});
+
+test('an approved no-change candidate completes without a commit or pull request', function () {
+    [, $task, $coderRun] = taskWithApprovedCandidate();
+    $task->update(['candidate_kind' => 'no_change']);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('forTask')->once()->andReturn([
+            'tree_sha' => 'candidate-1', 'base_tree_sha' => 'candidate-1', 'kind' => 'no_change',
+        ]);
+    mock(TaskWorktreeManager::class)
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'output' => '']);
+
+    app(TaskCommitIntegrator::class)->finalize(
+        $task, $coderRun, null, 'No repository change is required.', $coderRun->execution_token,
+    );
+
+    expect($task->refresh()->status)->toBe('completed')
+        ->and($task->outcome)->toBe('no_change')
+        ->and($task->commit_sha)->toBeNull()
+        ->and($task->pull_request_url)->toBeNull();
 });
 
 test('a commit that fails CI hands the Task back to the Coder instead of opening a pull request', function () {
@@ -88,9 +146,13 @@ test('a commit that fails CI hands the Task back to the Coder instead of opening
     mock(TaskWorktreeManager::class)
         ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
         ->shouldReceive('verifyHeadMatches')->once()
-        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'output' => 'FAILED: some test']);
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'output' => 'FAILED: some test'])
+        ->shouldReceive('resetToBasePreservingChanges')->once();
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->integrate($task, $coderRun, 'commit-sha-1', 'Implemented the change.');
+    app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token);
 
     $fresh = $task->refresh();
     expect($fresh->status)->toBe('waiting')
@@ -100,27 +162,29 @@ test('a commit that fails CI hands the Task back to the Coder instead of opening
         ->and($fresh->pull_request_url)->toBeNull();
 });
 
-test('repeated CI failures durably fail the Task once the repair cycle limit is exceeded', function () {
-    config(['aisf.max_repair_cycles' => 1]);
+test('CI failure durably fails the Task once the repair cycle limit is exceeded', function () {
+    config(['aisf.max_repair_cycles' => 0]);
     [, $task, $coderRun] = taskWithApprovedCandidate();
     mock(TaskWorktreeManager::class)
-        ->shouldReceive('verifyCommitExists')->twice()->andReturn('commit-sha-1')
-        ->shouldReceive('verifyHeadMatches')->twice()
-        ->shouldReceive('runCiCheck')->twice()->andReturn(['passed' => false, 'output' => 'FAILED']);
+        ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
+        ->shouldReceive('verifyHeadMatches')->once()
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'output' => 'FAILED']);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->integrate($task, $coderRun, 'commit-sha-1', 'Implemented the change.');
-    $task->refresh()->update(['status' => 'running']);
-    app(TaskCommitIntegrator::class)->integrate($task->refresh(), $coderRun, 'commit-sha-1', 'Implemented the change.');
+    app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token);
 
     $fresh = $task->refresh();
     expect($fresh->status)->toBe('failed')
+        ->and($fresh->outcome)->toBe('blocked')
         ->and($fresh->blocked_reason)->toContain('repair cycle limit');
 });
 
 test('QA repair handoffs durably fail the Task once the repair cycle limit is exceeded', function () {
     config(['aisf.max_repair_cycles' => 1]);
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
-    $task->update(['candidate_sha' => 'candidate-1']);
+    $task->update(['candidate_tree_sha' => 'candidate-1', 'candidate_created_by_run_id' => $coderRun->id]);
     $qaAgent = $project->agents()->where('role', 'qa')->sole();
     $qaRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($qaAgent, $task), 'qa', [
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
@@ -131,6 +195,7 @@ test('QA repair handoffs durably fail the Task once the repair cycle limit is ex
 
     $fresh = $task->refresh();
     expect($fresh->status)->toBe('failed')
+        ->and($fresh->outcome)->toBe('blocked')
         ->and($fresh->blocked_reason)->toContain('repair cycle limit');
 });
 
@@ -150,13 +215,35 @@ test('completing an Agent execution immediately triggers the next dispatch attem
 /** @return array{0: Project, 1: Task, 2: AgentRun, 3: AgentRun} */
 function taskWithApprovedCandidate(string $candidateSha = 'candidate-1'): array
 {
-    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
-    $task->update(['status' => 'running', 'candidate_sha' => $candidateSha]);
+    [$project, $task, $candidateRun] = taskRoleHandoffFixture('coder');
+    $task->update([
+        'status' => 'running',
+        'candidate_tree_sha' => $candidateSha,
+        'candidate_created_by_run_id' => $candidateRun->id,
+        'candidate_kind' => 'changes',
+    ]);
     $qaAgent = $project->agents()->where('role', 'qa')->sole();
     $qaRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($qaAgent, $task), 'qa', [
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
     ]);
-    app(CandidateAcceptanceGate::class)->recordReview($task, $coderRun, $qaRun, $candidateSha, 'approved', 'Looks good.', []);
+    app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $qaRun, $candidateSha, 'approved', 'Looks good.', []);
+    $handoff = app(TaskWorkflowService::class)->handoff(
+        $qaRun,
+        $task,
+        'coder',
+        'approved',
+        'qa-approved-'.$qaRun->id,
+        [],
+        $qaRun->execution_token,
+    );
+    $candidateRun->update(['status' => 'succeeded']);
+    $qaRun->update(['status' => 'succeeded']);
+    $coderAgent = $project->agents()->where('role', 'coder')->sole();
+    $coderRun = app(AgentSessionManager::class)->startRun(app(AgentSessionManager::class)->forSubject($coderAgent, $task), 'coder', [
+        'mode' => 'initial', 'input' => 'Finalize.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'coder',
+    ]);
+    $coderRun->update(['execution_metadata' => ['accepted_handoff_id' => $handoff->id, 'execution_mode' => 'approved']]);
+    $task->refresh()->update(['status' => 'running']);
 
     return [$project, $task->refresh(), $coderRun, $qaRun];
 }

@@ -146,6 +146,8 @@ class ProjectController extends Controller
                 'id',
                 'prompt',
                 'status',
+                'outcome',
+                'protocol_recovery_count',
                 'summary',
                 'evidence',
                 'failure_reason',
@@ -187,12 +189,15 @@ class ProjectController extends Controller
                 'objective',
                 'implementation_spec',
                 'status',
+                'protocol_recovery_count',
                 'branch_name',
                 'worktree_path',
                 'blocked_reason',
                 'last_handoff',
                 'commit_sha',
-                'candidate_sha',
+                'candidate_tree_sha',
+                'candidate_kind',
+                'outcome',
                 'pull_request_url',
             ]),
             'changed_files' => filled($task->worktree_path)
@@ -208,7 +213,7 @@ class ProjectController extends Controller
                 ->values()
                 ->all(),
             'candidate_reviews' => $task->candidateReviews
-                ->map(fn ($review): array => $review->only(['candidate_sha', 'status', 'summary', 'findings', 'created_at']))
+                ->map(fn ($review): array => $review->only(['candidate_tree_sha', 'status', 'summary', 'findings', 'created_at']))
                 ->values()
                 ->all(),
             'handoffs' => $task->handoffs
@@ -267,6 +272,8 @@ class ProjectController extends Controller
             'attempt' => $run->attempt,
             'purpose' => $run->purpose,
             'status' => $run->status,
+            'reconciliation_status' => $run->reconciliation_status,
+            'failure_class' => $run->failure_class,
             'context_mode' => $run->context_mode,
             'submitted_input' => $run->submitted_input,
             'context_sources' => $run->context_sources ?? [],

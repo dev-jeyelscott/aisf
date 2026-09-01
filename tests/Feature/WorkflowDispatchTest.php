@@ -19,7 +19,7 @@ test('the dispatcher claims a pending WorkRequest and dispatches its Agent execu
     Queue::assertPushed(ProcessAgentExecution::class, 1);
 });
 
-test('the dispatcher prefers the WorkRequest over eligible Tasks while it is still pending or waiting', function () {
+test('the dispatcher prefers an accepted Task handoff over a waiting planned WorkRequest', function () {
     Queue::fake();
     $project = feature10Project();
     $workRequest = feature10WorkRequest($project, ['status' => 'waiting']);
@@ -27,8 +27,8 @@ test('the dispatcher prefers the WorkRequest over eligible Tasks while it is sti
 
     app()->call([app(DispatchWorkflow::class), 'handle']);
 
-    expect($workRequest->refresh()->status)->toBe('running')
-        ->and($task->refresh()->status)->toBe('pending');
+    expect($workRequest->refresh()->status)->toBe('waiting')
+        ->and($task->refresh()->status)->toBe('running');
 });
 
 test('the dispatcher claims the lowest-position eligible Task once the WorkRequest is no longer active', function () {

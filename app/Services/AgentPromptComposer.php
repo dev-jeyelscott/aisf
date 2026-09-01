@@ -93,7 +93,18 @@ class AgentPromptComposer
     private function subjectSection(Task|WorkRequest $subject): string
     {
         if ($subject instanceof WorkRequest) {
-            return "WORK REQUEST\n{$subject->prompt}";
+            $tasks = $subject->tasks()->with('dependsOn')->get()->map(fn (Task $task): array => [
+                'id' => $task->id,
+                'position' => $task->position,
+                'title' => $task->title,
+                'status' => $task->status,
+                'outcome' => $task->outcome,
+                'depends_on_task_id' => $task->depends_on_task_id,
+                'dependency_status' => $task->dependsOn?->status,
+                'last_handoff' => $task->last_handoff,
+            ])->all();
+
+            return "WORK REQUEST\n{$subject->prompt}\nDurable planned Tasks: ".json_encode($tasks);
         }
 
         return "TASK\nTitle: {$subject->title}\nObjective: {$subject->objective}\nImplementation specification: {$subject->implementation_spec}\nAcceptance criteria: ".json_encode($subject->acceptance_criteria)."\nVerification commands: ".json_encode($subject->verification_commands)."\nBrowser verification steps: ".json_encode($subject->browser_steps)."\nPrior evidence: ".json_encode($subject->last_handoff);
@@ -103,7 +114,7 @@ class AgentPromptComposer
     private function subjectSnapshot(Task|WorkRequest $subject): array
     {
         return $subject instanceof WorkRequest
-            ? ['type' => 'work_request', 'id' => $subject->id, 'prompt' => $subject->prompt, 'evidence' => $subject->evidence]
+            ? ['type' => 'work_request', 'id' => $subject->id, 'prompt' => $subject->prompt, 'evidence' => $subject->evidence, 'tasks' => $subject->tasks()->get()->map->only(['id', 'position', 'title', 'status', 'outcome', 'depends_on_task_id', 'last_handoff'])->all()]
             : ['type' => 'task', 'id' => $subject->id, 'title' => $subject->title, 'objective' => $subject->objective, 'implementation_spec' => $subject->implementation_spec, 'acceptance_criteria' => $subject->acceptance_criteria, 'verification_commands' => $subject->verification_commands, 'browser_steps' => $subject->browser_steps, 'prior_evidence' => $subject->last_handoff];
     }
 }

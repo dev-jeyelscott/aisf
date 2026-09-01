@@ -35,6 +35,8 @@ class AgentRunAction extends Model
 
     public const RESOURCE_TASK = 'task';
 
+    public const RESOURCE_WORK_REQUEST = 'work_request';
+
     public const RESOURCE_CANDIDATE_REVIEW = 'candidate_review';
 
     public const RESOURCE_TASK_HANDOFF = 'task_handoff';

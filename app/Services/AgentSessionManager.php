@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\AgentRun;
-use App\Models\AgentRunAction;
 use App\Models\AgentSession;
 use App\Models\ProjectAgent;
 use App\Models\Task;
@@ -15,13 +14,6 @@ use UnexpectedValueException;
 
 class AgentSessionManager
 {
-    /**
-     * Initialize durable Agent session management with action recording.
-     */
-    public function __construct(
-        private readonly AgentRunActionRecorder $actionRecorder,
-    ) {}
-
     /**
      * Find or race-safely create the one logical session for an Agent and Task or WorkRequest subject.
      */
@@ -253,11 +245,6 @@ class AgentSessionManager
                     'finished_at' => now(),
                 ]);
 
-                $this->actionRecorder->record(
-                    $lockedRun,
-                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
-                    $lockedRun,
-                );
             },
             attempts: 3,
         );

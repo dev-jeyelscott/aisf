@@ -40,6 +40,13 @@ type AgentRun = {
     attempt: number;
     purpose: string;
     status: string;
+    reconciliation_status: 'satisfied' | 'recoverable' | 'terminal' | null;
+    failure_class:
+        | 'protocol_recoverable'
+        | 'infrastructure_recoverable'
+        | 'engineering_repair'
+        | 'terminal_blocked'
+        | null;
     context_mode: 'initial' | 'delta';
     submitted_input: string;
     context_sources: ContextSource[];
@@ -89,6 +96,10 @@ type Task = {
         | 'completed'
         | 'failed'
         | 'cancelled';
+    outcome: 'implemented' | 'no_change' | 'blocked' | null;
+    protocol_recovery_count: number;
+    candidate_tree_sha: string | null;
+    candidate_kind: 'changes' | 'no_change' | null;
     branch_name: string | null;
     worktree_path: string | null;
     blocked_reason: string | null;
@@ -112,6 +123,8 @@ type WorkRequest = {
         | 'completed'
         | 'failed'
         | 'cancelled';
+    outcome: 'implemented' | 'already_implemented' | 'blocked' | null;
+    protocol_recovery_count: number;
     summary: string | null;
     evidence: string[] | null;
     failure_reason: string | null;
@@ -218,6 +231,15 @@ function AgentSessionActivity({
                                         >
                                             {humanize(run.status)}
                                         </span>
+                                        {run.reconciliation_status && (
+                                            <span className="text-muted-foreground text-xs">
+                                                {humanize(
+                                                    run.reconciliation_status,
+                                                )}
+                                                {run.failure_class &&
+                                                    ` · ${humanize(run.failure_class)}`}
+                                            </span>
+                                        )}
                                     </div>
                                     <span className="text-muted-foreground text-xs capitalize">
                                         {humanize(run.purpose)}
@@ -445,6 +467,8 @@ export default function ProjectWorkspace({
                                 className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(request.status)}`}
                             >
                                 {humanize(request.status)}
+                                {request.outcome &&
+                                    ` · ${humanize(request.outcome)}`}
                             </span>
                         </div>
 
@@ -559,6 +583,8 @@ export default function ProjectWorkspace({
                                                         className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(task.status)}`}
                                                     >
                                                         {humanize(task.status)}
+                                                        {task.outcome &&
+                                                            ` · ${humanize(task.outcome)}`}
                                                     </span>
                                                     {task.repair_cycle_count >
                                                         0 && (

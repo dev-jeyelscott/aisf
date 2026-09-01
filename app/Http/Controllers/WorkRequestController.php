@@ -36,6 +36,8 @@ class WorkRequestController extends Controller
         if ($workRequest->status === 'failed') {
             $workRequest->update([
                 'status' => 'pending',
+                'outcome' => null,
+                'protocol_recovery_count' => 0,
                 'failure_reason' => null,
                 'last_handoff' => null,
             ]);

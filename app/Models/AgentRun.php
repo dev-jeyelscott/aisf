@@ -22,6 +22,8 @@ use Illuminate\Support\Carbon;
     'role',
     'execution_token',
     'status',
+    'reconciliation_status',
+    'failure_class',
     'attempt',
     'context_mode',
     'submitted_input',

@@ -14,6 +14,7 @@ use App\Services\AgentSessionManager;
 use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
 use App\Services\RepairCycleGuard;
+use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
@@ -114,6 +115,12 @@ test('a successful MCP Coder result save records the Task against the exact Code
         ->shouldReceive('changedFiles')
         ->once()
         ->andReturn(['app/Services/Example.php']);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('forTask')->once()->andReturn([
+            'tree_sha' => 'candidate-tree-1',
+            'base_tree_sha' => 'base-tree',
+            'kind' => 'changes',
+        ]);
 
     $response = AgentRunActionMcpServer::tool(SaveTaskResult::class, [
         'task_id' => $task->id,
@@ -136,7 +143,8 @@ test('a successful MCP Coder result save records the Task against the exact Code
         ->where('action', AgentRunAction::ACTION_TASK_RESULT_SAVED)
         ->sole();
 
-    expect($task->refresh()->candidate_sha)->toBe('base-sha');
+    expect($task->refresh()->candidate_tree_sha)->toBe('candidate-tree-1')
+        ->and($task->candidate_created_by_run_id)->toBe($run->id);
     expect($run->refresh()->artifacts['summary'])
         ->toBe('Implemented the requested behavior.');
     expect($action->resource_type)
@@ -167,6 +175,16 @@ test('separate Coder runs on the same Task retain separate action evidence', fun
         ->shouldReceive('changedFiles')
         ->twice()
         ->andReturn([]);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('forTask')->twice()->andReturn([
+            'tree_sha' => 'candidate-tree-1',
+            'base_tree_sha' => 'base-tree',
+            'kind' => 'changes',
+        ], [
+            'tree_sha' => 'candidate-tree-2',
+            'base_tree_sha' => 'base-tree',
+            'kind' => 'changes',
+        ]);
 
     app(TaskWorkflowService::class)->saveResult(
         $firstRun,
@@ -232,7 +250,8 @@ test('a successful MCP QA review records the CandidateReview against the exact Q
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
 
     $task->update([
-        'candidate_sha' => 'candidate-1',
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
     ]);
 
     $coderRun->update([
@@ -261,7 +280,7 @@ test('a successful MCP QA review records the CandidateReview against the exact Q
         'task_id' => $task->id,
         'agent_run_id' => $qaRun->id,
         'execution_token' => $qaRun->execution_token,
-        'candidate_sha' => 'candidate-1',
+        'candidate_tree_sha' => 'candidate-1',
         'status' => 'approved',
         'summary' => 'The candidate satisfies the Task.',
         'findings' => [],
@@ -299,6 +318,11 @@ test('an idempotent MCP handoff retry does not duplicate durable action evidence
         'artifacts' => [
             'validation' => [],
         ],
+    ]);
+    $task->update([
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $run->id,
+        'candidate_kind' => 'changes',
     ]);
 
     mock(TaskWorktreeManager::class)
@@ -390,7 +414,8 @@ test('a rejected QA review creates neither a review nor action evidence', functi
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
 
     $task->update([
-        'candidate_sha' => 'candidate-1',
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
     ]);
 
     $qaAgent = $project->agents()
@@ -481,6 +506,12 @@ test('a failed action insert rolls back both Coder result writes', function () {
         ->shouldReceive('changedFiles')
         ->once()
         ->andReturn([]);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('forTask')->once()->andReturn([
+            'tree_sha' => 'candidate-tree-1',
+            'base_tree_sha' => 'base-tree',
+            'kind' => 'changes',
+        ]);
 
     AgentRunAction::creating(function (): void {
         throw new RuntimeException('Action persistence failed.');
@@ -503,7 +534,7 @@ test('a failed action insert rolls back both Coder result writes', function () {
     }
 
     expect($run->refresh()->artifacts)->toBeNull();
-    expect($task->refresh()->candidate_sha)->toBeNull();
+    expect($task->refresh()->candidate_tree_sha)->toBeNull();
     expect($run->actions()->count())->toBe(0);
 });
 
@@ -511,7 +542,8 @@ test('a later domain failure rolls back its handoff and action while preserving 
     [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
 
     $task->update([
-        'candidate_sha' => 'candidate-1',
+        'candidate_tree_sha' => 'candidate-1',
+        'candidate_created_by_run_id' => $coderRun->id,
     ]);
 
     $coderRun->update([
@@ -578,7 +610,7 @@ test('a later domain failure rolls back its handoff and action while preserving 
     )->toBe(1);
 });
 
-test('a successfully persisted Agent completion records its workflow outcome against the same run', function () {
+test('ordinary Agent completion does not record a workflow outcome action', function () {
     [, , $run] = taskRoleHandoffFixture('coder');
 
     app(AgentSessionManager::class)->completeRun(
@@ -593,18 +625,8 @@ test('a successfully persisted Agent completion records its workflow outcome aga
         ],
     );
 
-    $action = $run->actions()
-        ->where(
-            'action',
-            AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
-        )
-        ->sole();
-
     expect($run->refresh()->status)->toBe('succeeded');
-    expect($action->resource_type)
-        ->toBe(AgentRunAction::RESOURCE_AGENT_RUN);
-    expect($action->resource_id)
-        ->toBe($run->id);
+    expect($run->actions()->where('action', AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED)->count())->toBe(0);
 });
 
 test('a failed Agent execution does not record a successful workflow outcome', function () {
@@ -649,12 +671,16 @@ test('finalizing an approved candidate records the completed Task against the re
             'commit_sha' => 'commit-sha-1',
             'pull_request_url' => 'https://github.com/example/project/pull/1',
         ]);
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->integrate(
+    app(TaskCommitIntegrator::class)->finalize(
         $task,
         $coderRun,
         'commit-sha-1',
         'Implemented the change.',
+        $coderRun->execution_token,
     );
 
     $action = $coderRun->actions()
@@ -685,13 +711,19 @@ test('a CI repair handoff is attributed to the Coder run that caused it', functi
         ->andReturn([
             'passed' => false,
             'output' => 'FAILED: focused regression test',
-        ]);
+        ])
+        ->shouldReceive('resetToBasePreservingChanges')
+        ->once();
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
 
-    app(TaskCommitIntegrator::class)->integrate(
+    app(TaskCommitIntegrator::class)->finalize(
         $task,
         $coderRun,
         'commit-sha-1',
         'Implemented the change.',
+        $coderRun->execution_token,
     );
 
     $handoff = $task->handoffs()
@@ -756,11 +788,13 @@ function agentRunActionProjectManagerFixture(): array
 function agentRunActionApprovedCandidateFixture(
     string $candidateSha = 'candidate-1',
 ): array {
-    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
+    [$project, $task, $candidateRun] = taskRoleHandoffFixture('coder');
 
     $task->update([
         'status' => 'running',
-        'candidate_sha' => $candidateSha,
+        'candidate_tree_sha' => $candidateSha,
+        'candidate_created_by_run_id' => $candidateRun->id,
+        'candidate_kind' => 'changes',
     ]);
 
     $qaAgent = $project->agents()
@@ -782,13 +816,39 @@ function agentRunActionApprovedCandidateFixture(
 
     app(CandidateAcceptanceGate::class)->recordReview(
         $task,
-        $coderRun,
+        $candidateRun,
         $qaRun,
         $candidateSha,
         'approved',
         'The candidate is approved.',
         [],
     );
+
+    $handoff = app(TaskWorkflowService::class)->handoff(
+        $qaRun,
+        $task,
+        'coder',
+        'approved',
+        'qa-approved-'.$qaRun->id,
+        [],
+        $qaRun->execution_token,
+    );
+    $candidateRun->update(['status' => 'succeeded']);
+    $qaRun->update(['status' => 'succeeded']);
+    $coderAgent = $project->agents()->where('role', 'coder')->sole();
+    $coderRun = app(AgentSessionManager::class)->startRun(
+        app(AgentSessionManager::class)->forSubject($coderAgent, $task),
+        'coder',
+        [
+            'mode' => 'initial', 'input' => 'Finalize.', 'sources' => [],
+            'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'coder',
+        ],
+    );
+    $coderRun->update(['execution_metadata' => [
+        'accepted_handoff_id' => $handoff->id,
+        'execution_mode' => 'approved',
+    ]]);
+    $task->refresh()->update(['status' => 'running']);
 
     return [$project, $task->refresh(), $coderRun, $qaRun];
 }

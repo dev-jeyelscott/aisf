@@ -256,6 +256,25 @@ class TaskWorktreeManager
     }
 
     /**
+     * Return a rejected finalization commit to an uncommitted candidate so CI repair can produce a fresh tree.
+     */
+    public function resetToBasePreservingChanges(Task $task): void
+    {
+        $worktreePath = (string) $task->worktree_path;
+        $baseSha = (string) $task->base_sha;
+
+        if ($worktreePath === '' || ! is_dir($worktreePath) || $baseSha === '') {
+            throw new UnexpectedValueException('The Task baseline is required before CI repair.');
+        }
+
+        $result = $this->run($worktreePath, ['git', 'reset', '--mixed', $baseSha]);
+
+        if ($result === null || $result->failed()) {
+            throw new UnexpectedValueException('Unable to return the failed CI candidate to an editable state.');
+        }
+    }
+
+    /**
      * A Coder may not create a Git commit until a later, approved finalization turn.
      */
     public function assertNoCommitBeforeQa(Task $task): void

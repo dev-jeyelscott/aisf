@@ -1,14 +1,20 @@
 <?php
 
+use App\Jobs\DispatchWorkflowForProject;
 use App\Jobs\ProcessAgentExecution;
+use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
+use App\Services\AgentSessionManager;
+use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
+use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
+use App\Services\WorkflowOutcomeService;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
@@ -45,7 +51,7 @@ class Feature09FakeAgentHarness extends AgentHarness
         $this->writable = $writable;
 
         if ($this->sideEffect !== null) {
-            ($this->sideEffect)($repositoryPath);
+            ($this->sideEffect)($repositoryPath, $prompt);
         }
 
         if ($this->result instanceof Throwable) {
@@ -73,36 +79,41 @@ class Feature09FakeAgentHarness extends AgentHarness
 }
 
 test('PM completion creates loosely-specified Tasks without requiring acceptance criteria or browser steps', function () {
+    Queue::fake([DispatchWorkflowForProject::class]);
     [, $workRequest] = feature09Fixture();
-    feature09FakeHarness(feature09PmCompletion([
-        'summary' => 'Add a root README.',
-        'already_implemented' => false,
-        'tasks' => [
-            ['title' => 'Add README.md', 'objective' => 'Document the project.'],
-        ],
-    ]));
+    feature09FakeHarness('Planning persisted.', function (string $path, string $prompt) use ($workRequest): void {
+        [$run, $token] = feature09RunAuthorization($prompt);
+        $task = app(TaskWorkflowService::class)->savePlan($run, $workRequest, [[
+            'title' => 'Add README.md', 'objective' => 'Document the project.',
+            'implementation_spec' => '', 'acceptance_criteria' => [],
+            'verification_commands' => [], 'browser_steps' => [], 'depends_on_position' => null,
+        ]], $token)[0];
+        app(TaskWorkflowService::class)->handoff($run, $task, 'coder', 'implementation_ready', 'pm-coder-'.$run->id, [], $token);
+    });
 
     app()->call([new ProcessAgentExecution($workRequest), 'handle']);
 
     $workRequest->refresh();
     $task = $workRequest->tasks()->sole();
 
-    expect($workRequest->status)->toBe('completed')
-        ->and($workRequest->summary)->toBe('Add a root README.')
+    expect($workRequest->status)->toBe('waiting')
         ->and($task->position)->toBe(1)
         ->and($task->title)->toBe('Add README.md')
-        ->and($task->status)->toBe('pending')
-        ->and($task->last_handoff)->toBeNull()
+        ->and($task->status)->toBe('waiting')
+        ->and($task->last_handoff['reason'])->toBe('implementation_ready')
         ->and($task->acceptance_criteria)->toBe([]);
 });
 
 test('PM already-implemented completion marks the WorkRequest completed without creating Tasks', function () {
+    Queue::fake([DispatchWorkflowForProject::class]);
     [, $workRequest] = feature09Fixture();
-    feature09FakeHarness(feature09PmCompletion([
-        'summary' => 'The README already exists.',
-        'already_implemented' => true,
-        'tasks' => [],
-    ]));
+    feature09FakeHarness('The README already exists.', function (string $path, string $prompt) use ($workRequest): void {
+        [$run, $token] = feature09RunAuthorization($prompt);
+        app(WorkflowOutcomeService::class)->record(
+            $run, $workRequest, 'already_implemented', 'The README already exists.',
+            ['The README already exists.'], $token,
+        );
+    });
 
     app()->call([new ProcessAgentExecution($workRequest), 'handle']);
 
@@ -110,35 +121,30 @@ test('PM already-implemented completion marks the WorkRequest completed without 
 
     expect($workRequest->status)->toBe('completed')
         ->and($workRequest->evidence)->toBe(['The README already exists.'])
+        ->and($workRequest->outcome)->toBe('already_implemented')
         ->and($workRequest->tasks()->count())->toBe(0);
 });
 
 test('a completion reporting an approved review with zero findings is accepted', function () {
-    [, , $task] = feature09TaskFixture();
-    feature09FakeHarness(feature09Completion([
-        'status' => 'failed',
-        'summary' => 'Reporting a zero-finding review must not itself break the completion contract.',
-        'review' => [
-            'candidate_sha' => 'deadbeef',
-            'status' => 'approved',
-            'summary' => 'No blocking issues found.',
-            'findings' => [],
-        ],
-    ]));
+    [$project, , $task] = feature09TaskFixture();
+    $coder = $project->agents()->where('role', 'coder')->sole();
+    $qa = $project->agents()->where('role', 'qa')->sole();
+    $sessions = app(AgentSessionManager::class);
+    $coderRun = $sessions->startRun($sessions->forSubject($coder, $task), 'coder', feature09RunContext('coder'));
+    $qaRun = $sessions->startRun($sessions->forSubject($qa, $task), 'qa', feature09RunContext('qa'));
+    $task->update(['candidate_tree_sha' => 'deadbeef', 'candidate_created_by_run_id' => $coderRun->id]);
 
-    app()->call([new ProcessAgentExecution($task), 'handle']);
+    $review = app(CandidateAcceptanceGate::class)->recordReview(
+        $task, $coderRun, $qaRun, 'deadbeef', 'approved', 'No blocking issues found.', [],
+    );
 
-    $task->refresh();
-
-    // Laravel's required/required_with rules treat an empty array as absent, which used to reject
-    // this exact shape -- a clean approval with no findings -- and mask it behind the generic
-    // "does not satisfy the minimal completion contract" error instead of the Agent's real summary.
-    expect($task->status)->toBe('failed')
-        ->and($task->blocked_reason)->toBe('Reporting a zero-finding review must not itself break the completion contract.');
+    expect($review->findings)->toBe([])
+        ->and(app(CandidateAcceptanceGate::class)->hasCurrentApproval($task->refresh()))->toBeTrue();
 });
 
 test('a Task cannot execute without a durable PM handoff', function () {
     [, , $task] = feature09TaskFixture();
+    $task->update(['last_handoff' => null]);
     feature09FakeHarness(feature09Completion([
         'status' => 'completed',
         'summary' => 'Added the README.',
@@ -383,13 +389,15 @@ test('an Agent execution failure retries then marks the Task failed with an oper
 
 test('an operator Retry re-enters a failed Task as pending', function () {
     [$project, , $task] = feature09TaskFixture();
-    $task->update(['status' => 'failed', 'blocked_reason' => 'Implementation failed.', 'last_handoff' => ['to_role' => 'implementation_specialist']]);
+    $task->update(['status' => 'failed', 'outcome' => 'blocked', 'protocol_recovery_count' => 3, 'blocked_reason' => 'Implementation failed.', 'last_handoff' => ['to_role' => 'implementation_specialist']]);
 
     $response = $this->post(route('projects.tasks.retry', [$project, $task]));
 
     $response->assertRedirect(route('projects.show', $project));
 
     expect($task->refresh()->status)->toBe('pending')
+        ->and($task->outcome)->toBeNull()
+        ->and($task->protocol_recovery_count)->toBe(0)
         ->and($task->blocked_reason)->toBeNull()
         ->and($task->last_handoff)->toBeNull();
 });
@@ -397,13 +405,15 @@ test('an operator Retry re-enters a failed Task as pending', function () {
 test('an operator Retry re-enters a failed WorkRequest as pending', function () {
     Queue::fake();
     [$project, $workRequest] = feature09Fixture();
-    $workRequest->update(['status' => 'failed', 'failure_reason' => 'Foreman execution failed.']);
+    $workRequest->update(['status' => 'failed', 'outcome' => 'blocked', 'protocol_recovery_count' => 3, 'failure_reason' => 'Foreman execution failed.']);
 
     $response = $this->post(route('projects.work-requests.retry', [$project, $workRequest]));
 
     $response->assertRedirect(route('projects.show', $project));
 
     expect($workRequest->refresh()->status)->toBe('pending')
+        ->and($workRequest->outcome)->toBeNull()
+        ->and($workRequest->protocol_recovery_count)->toBe(0)
         ->and($workRequest->failure_reason)->toBeNull();
 });
 
@@ -531,4 +541,22 @@ function feature09TemporaryGitRepository(): string
     ])->throw();
 
     return $path;
+}
+
+/** @return array{0: AgentRun, 1: string} */
+function feature09RunAuthorization(string $prompt): array
+{
+    preg_match('/Agent run ID: (\d+)/', $prompt, $runMatch);
+    preg_match('/Agent run token: ([A-Za-z0-9]+)/', $prompt, $tokenMatch);
+
+    return [AgentRun::query()->findOrFail((int) $runMatch[1]), $tokenMatch[1]];
+}
+
+/** @return array<string, mixed> */
+function feature09RunContext(string $role): array
+{
+    return [
+        'mode' => 'initial', 'input' => 'Execute.', 'sources' => [],
+        'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => $role,
+    ];
 }

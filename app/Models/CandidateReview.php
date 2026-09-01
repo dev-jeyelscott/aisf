@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['candidate_agent_run_id', 'reviewer_agent_run_id', 'candidate_sha', 'status', 'summary', 'findings'])]
+#[Fillable(['candidate_agent_run_id', 'reviewer_agent_run_id', 'candidate_sha', 'candidate_tree_sha', 'status', 'summary', 'findings'])]
 class CandidateReview extends Model
 {
     /** @use HasFactory<CandidateReviewFactory> */

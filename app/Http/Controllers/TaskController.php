@@ -38,6 +38,8 @@ class TaskController extends Controller
         if ($task->status === 'failed') {
             $task->update([
                 'status' => 'pending',
+                'outcome' => null,
+                'protocol_recovery_count' => 0,
                 'blocked_reason' => null,
                 'last_handoff' => null,
             ]);

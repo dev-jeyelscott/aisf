@@ -41,15 +41,34 @@ class CandidateAcceptanceGate
             $summary,
             $findings,
         ): CandidateReview {
+            $task = Task::query()->lockForUpdate()->findOrFail($task->id);
+
             if (! in_array($status, ['approved', 'changes_requested'], true)) {
                 throw new UnexpectedValueException(
                     'A candidate review must be approved or changes requested.',
                 );
             }
 
-            if ($task->candidate_sha !== $candidateSha) {
+            $findings = array_values(array_filter(
+                array_map(fn (string $finding): string => trim($finding), $findings),
+                fn (string $finding): bool => $finding !== '',
+            ));
+
+            if ($status === 'changes_requested' && $findings === []) {
                 throw new UnexpectedValueException(
-                    'A review may only evaluate the Task’s current immutable candidate SHA.',
+                    'A changes-requested review requires at least one finding.',
+                );
+            }
+
+            if ($task->candidate_tree_sha !== $candidateSha) {
+                throw new UnexpectedValueException(
+                    'A review may only evaluate the Task’s current immutable candidate tree SHA.',
+                );
+            }
+
+            if ((int) $task->candidate_created_by_run_id !== (int) $candidateRun->id) {
+                throw new UnexpectedValueException(
+                    'The candidate-producing run does not match the Task’s current candidate.',
                 );
             }
 
@@ -69,6 +88,7 @@ class CandidateAcceptanceGate
                 'candidate_agent_run_id' => $candidateRun->id,
                 'reviewer_agent_run_id' => $reviewerRun->id,
                 'candidate_sha' => $candidateSha,
+                'candidate_tree_sha' => $candidateSha,
                 'status' => $status,
                 'summary' => $summary,
                 'findings' => $findings,
@@ -89,12 +109,12 @@ class CandidateAcceptanceGate
      */
     public function hasCurrentApproval(Task $task): bool
     {
-        if (! filled($task->candidate_sha)) {
+        if (! filled($task->candidate_tree_sha)) {
             return false;
         }
 
         $latestReview = $task->candidateReviews()
-            ->where('candidate_sha', $task->candidate_sha)
+            ->where('candidate_tree_sha', $task->candidate_tree_sha)
             ->latest('id')
             ->first();
 

@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /** @property array<string, mixed>|null $last_handoff */
-#[Fillable(['prompt', 'status', 'summary', 'evidence', 'failure_reason', 'last_handoff', 'source_type', 'source_external_id', 'source_url', 'source_metadata'])]
+#[Fillable(['prompt', 'status', 'outcome', 'protocol_recovery_count', 'summary', 'evidence', 'failure_reason', 'last_handoff', 'source_type', 'source_external_id', 'source_url', 'source_metadata'])]
 class WorkRequest extends Model
 {
     /** @use HasFactory<WorkRequestFactory> */
@@ -37,6 +37,7 @@ class WorkRequest extends Model
             'evidence' => 'array',
             'last_handoff' => 'array',
             'source_metadata' => 'array',
+            'protocol_recovery_count' => 'integer',
         ];
     }
 

@@ -81,17 +81,17 @@ test('candidate approval requires a different Agent and the current candidate SH
         'acceptance_criteria' => [],
         'verification_commands' => [],
         'browser_steps' => [],
-        'candidate_sha' => 'candidate-sha',
     ]);
     $sessions = app(AgentSessionManager::class);
     $coder = $project->agents()->where('role', 'coder')->sole();
     $reviewer = $project->agents()->where('role', 'qa')->sole();
     $candidateRun = $sessions->startRun($sessions->forSubject($coder, $task), 'implementation', foremanRunContext());
     $reviewerRun = $sessions->startRun($sessions->forSubject($reviewer, $task), 'review', foremanRunContext());
+    $task->update(['candidate_tree_sha' => 'candidate-sha', 'candidate_created_by_run_id' => $candidateRun->id]);
 
     $review = app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $reviewerRun, 'candidate-sha', 'approved', 'Approved.', []);
 
-    expect($review->candidate_sha)->toBe('candidate-sha')
+    expect($review->candidate_tree_sha)->toBe('candidate-sha')
         ->and(app(CandidateAcceptanceGate::class)->hasCurrentApproval($task))->toBeTrue();
 
     expect(fn () => app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $candidateRun, 'candidate-sha', 'approved', 'Self approved.', []))->toThrow(UnexpectedValueException::class)

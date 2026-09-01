@@ -7,6 +7,7 @@ use App\Models\AgentRunAction;
 use App\Models\CandidateReview;
 use App\Models\Task;
 use App\Models\TaskHandoff;
+use App\Models\WorkRequest;
 use Illuminate\Database\Eloquent\Model;
 use UnexpectedValueException;
 
@@ -44,10 +45,6 @@ class AgentRunActionRecorder
             Task::class,
             AgentRunAction::RESOURCE_TASK,
         ],
-        AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED => [
-            AgentRun::class,
-            AgentRunAction::RESOURCE_AGENT_RUN,
-        ],
     ];
 
     /**
@@ -68,6 +65,22 @@ class AgentRunActionRecorder
             throw new UnexpectedValueException(
                 'AgentRun action evidence requires a persisted durable resource.',
             );
+        }
+
+        if ($action === AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED) {
+            if (! $resource instanceof Task && ! $resource instanceof WorkRequest) {
+                throw new UnexpectedValueException(
+                    'Workflow outcome evidence must reference a Task or WorkRequest.',
+                );
+            }
+
+            return $run->actions()->create([
+                'action' => $action,
+                'resource_type' => $resource instanceof Task
+                    ? AgentRunAction::RESOURCE_TASK
+                    : AgentRunAction::RESOURCE_WORK_REQUEST,
+                'resource_id' => (int) $resource->getKey(),
+            ]);
         }
 
         $definition = self::ACTION_RESOURCES[$action] ?? null;

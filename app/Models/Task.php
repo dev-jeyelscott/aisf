@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property list<string> $browser_steps
  * @property array<string, mixed>|null $last_handoff
  */
-#[Fillable(['assigned_project_agent_id', 'depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'last_handoff', 'commit_sha', 'candidate_sha', 'pull_request_url'])]
+#[Fillable(['assigned_project_agent_id', 'depends_on_task_id', 'position', 'title', 'objective', 'implementation_spec', 'acceptance_criteria', 'verification_commands', 'browser_steps', 'status', 'outcome', 'protocol_recovery_count', 'base_branch', 'base_sha', 'branch_name', 'worktree_path', 'blocked_reason', 'last_handoff', 'commit_sha', 'candidate_sha', 'candidate_tree_sha', 'candidate_created_by_run_id', 'candidate_kind', 'pull_request_url'])]
 class Task extends Model
 {
     /** @use HasFactory<TaskFactory> */
@@ -42,6 +42,7 @@ class Task extends Model
             'verification_commands' => 'array',
             'browser_steps' => 'array',
             'last_handoff' => 'array',
+            'protocol_recovery_count' => 'integer',
         ];
     }
 
@@ -73,6 +74,12 @@ class Task extends Model
     public function assignedProjectAgent(): BelongsTo
     {
         return $this->belongsTo(ProjectAgent::class, 'assigned_project_agent_id');
+    }
+
+    /** @return BelongsTo<AgentRun, $this> */
+    public function candidateCreatedByRun(): BelongsTo
+    {
+        return $this->belongsTo(AgentRun::class, 'candidate_created_by_run_id');
     }
 
     /**
