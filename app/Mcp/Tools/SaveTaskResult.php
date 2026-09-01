@@ -22,7 +22,11 @@ class SaveTaskResult extends Tool
      */
     public function handle(Request $request): Response
     {
-        $data = $request->validate(['task_id' => ['required', 'integer'], 'agent_run_id' => ['required', 'integer'], 'execution_token' => ['required', 'string'], 'result' => ['required', 'array']]);
+        // 'present' not 'required': every field TaskWorkflowService::saveResult reads from `result`
+        // is optionally defaulted, so an empty result object is a legitimate call (e.g. no file
+        // changes to report) -- 'required' would wrongly reject it, the same empty-array-as-absent
+        // trap fixed on review.findings.
+        $data = $request->validate(['task_id' => ['required', 'integer'], 'agent_run_id' => ['required', 'integer'], 'execution_token' => ['required', 'string'], 'result' => ['present', 'array']]);
 
         return Response::json(app(TaskWorkflowService::class)->saveResult(AgentRun::query()->whereKey($data['agent_run_id'])->sole(), Task::query()->whereKey($data['task_id'])->sole(), $data['result'], $data['execution_token']));
     }
