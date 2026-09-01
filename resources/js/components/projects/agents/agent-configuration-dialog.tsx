@@ -1,10 +1,10 @@
-import { Form } from "@inertiajs/react";
-import { CircleCheck, CircleMinus, Plus, Trash2, X } from "lucide-react";
-import { useRef, useState } from "react";
-import AgentController from "@/actions/App/Http/Controllers/ProjectAgentController";
-import InputError from "@/components/input-error";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { Form } from '@inertiajs/react';
+import { CircleCheck, CircleMinus, Plus, Trash2, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import AgentController from '@/actions/App/Http/Controllers/ProjectAgentController';
+import InputError from '@/components/input-error';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import {
     Dialog,
     DialogClose,
@@ -13,16 +13,16 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
     Select,
     SelectContent,
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/components/ui/select";
+} from '@/components/ui/select';
 
 export type AgentConfigurationSkill = {
     id: number;
@@ -58,28 +58,28 @@ type SettingRow = {
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> =
     {
         codex: [
-            { value: "gpt-5.6", label: "GPT-5.6 Sol" },
-            { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-            { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-            { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+            { value: 'gpt-5.6', label: 'GPT-5.6 Sol' },
+            { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+            { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+            { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
         ],
 
         claude: [
-            { value: "claude-opus-5", label: "Claude Opus 5" },
-            { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-            { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-            { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+            { value: 'claude-opus-5', label: 'Claude Opus 5' },
+            { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+            { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+            { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
             {
-                value: "claude-haiku-4-5-20251001",
-                label: "Claude Haiku 4.5",
+                value: 'claude-haiku-4-5-20251001',
+                label: 'Claude Haiku 4.5',
             },
         ],
     };
 
 const REASONING_OPTIONS = [
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
 ] as const;
 
 type ConfigurationSectionProps = {
@@ -116,7 +116,7 @@ function createSettingRows(
     settings: Record<string, unknown> | null,
 ): SettingRow[] {
     return Object.entries(settings ?? {})
-        .filter(([key]) => key !== "reasoning")
+        .filter(([key]) => key !== 'reasoning')
         .map(([key, value], index) => ({
             id: `setting-${index}`,
             key,
@@ -128,7 +128,7 @@ function createSettingRows(
  * Serialize one persisted JSON value for display in the value input.
  */
 function settingValueToInput(value: unknown): string {
-    return JSON.stringify(value) ?? "";
+    return JSON.stringify(value) ?? '';
 }
 
 /**
@@ -137,8 +137,8 @@ function settingValueToInput(value: unknown): string {
 function parseSettingValue(value: string): unknown {
     const normalizedValue = value.trim();
 
-    if (normalizedValue === "") {
-        return "";
+    if (normalizedValue === '') {
+        return '';
     }
 
     try {
@@ -152,15 +152,15 @@ function parseSettingValue(value: string): unknown {
  * Serialize key-value rows back into the existing settings JSON contract.
  */
 function serializeSettings(rows: SettingRow[], reasoning: string): string {
-    if (rows.length === 0 && reasoning === "") {
-        return "";
+    if (rows.length === 0 && reasoning === '') {
+        return '';
     }
 
     const settings = Object.fromEntries(
         rows.map((row) => [row.key.trim(), parseSettingValue(row.value)]),
     );
 
-    if (reasoning !== "") {
+    if (reasoning !== '') {
         settings.reasoning = reasoning;
     }
 
@@ -178,7 +178,7 @@ function modelOptionsFor(
 
     if (
         currentModel !== null &&
-        currentModel !== "" &&
+        currentModel !== '' &&
         !options.some((option) => option.value === currentModel)
     ) {
         return [
@@ -196,12 +196,12 @@ function modelOptionsFor(
 function validateSettingRows(rows: SettingRow[]): string | null {
     const keys = rows.map((row) => row.key.trim());
 
-    if (keys.some((key) => key === "")) {
-        return "Setting keys cannot be blank.";
+    if (keys.some((key) => key === '')) {
+        return 'Setting keys cannot be blank.';
     }
 
     if (new Set(keys).size !== keys.length) {
-        return "Setting keys must be unique.";
+        return 'Setting keys must be unique.';
     }
 
     return null;
@@ -313,18 +313,18 @@ export default function AgentConfigurationDialog({
     const nextSettingId = useRef(initialSettingRows.length);
     const [enabled, setEnabled] = useState(agent.enabled);
     const [harness, setHarness] = useState(agent.harness);
-    const [model, setModel] = useState(agent.model ?? "");
+    const [model, setModel] = useState(agent.model ?? '');
     const [reasoning, setReasoning] = useState(
-        typeof agent.settings?.reasoning === "string"
+        typeof agent.settings?.reasoning === 'string'
             ? agent.settings.reasoning
-            : "",
+            : '',
     );
     const [settingRows, setSettingRows] =
         useState<SettingRow[]>(initialSettingRows);
     const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>(
         agent.skills.map((skill) => skill.id),
     );
-    const [skillToAdd, setSkillToAdd] = useState("");
+    const [skillToAdd, setSkillToAdd] = useState('');
 
     const settingsClientError = validateSettingRows(settingRows);
     const serializedSettings = serializeSettings(settingRows, reasoning);
@@ -353,7 +353,7 @@ export default function AgentConfigurationDialog({
      * Update the persisted enabled state selection.
      */
     function handleEnabledChange(value: string): void {
-        setEnabled(value === "1");
+        setEnabled(value === '1');
     }
 
     /**
@@ -361,7 +361,7 @@ export default function AgentConfigurationDialog({
      */
     function handleHarnessChange(value: string): void {
         setHarness(value);
-        setModel("");
+        setModel('');
     }
 
     /**
@@ -369,7 +369,7 @@ export default function AgentConfigurationDialog({
      */
     function handleSettingChange(
         id: string,
-        field: "key" | "value",
+        field: 'key' | 'value',
         value: string,
     ): void {
         setSettingRows((rows) =>
@@ -387,7 +387,7 @@ export default function AgentConfigurationDialog({
             ...rows,
             {
                 id: `setting-new-${nextSettingId.current++}`,
-                key: "",
+                key: '',
                 value: '""',
             },
         ]);
@@ -411,13 +411,13 @@ export default function AgentConfigurationDialog({
             selectedSkillIds.includes(skillId) ||
             !skills.some((skill) => skill.id === skillId)
         ) {
-            setSkillToAdd("");
+            setSkillToAdd('');
 
             return;
         }
 
         setSelectedSkillIds((skillIds) => [...skillIds, skillId]);
-        setSkillToAdd("");
+        setSkillToAdd('');
     }
 
     /**
@@ -485,8 +485,8 @@ export default function AgentConfigurationDialog({
                                             </DialogTitle>
                                             <DialogDescription className="mt-1 capitalize">
                                                 {agent.role.replaceAll(
-                                                    "_",
-                                                    " ",
+                                                    '_',
+                                                    ' ',
                                                 )}
                                             </DialogDescription>
                                         </div>
@@ -494,7 +494,7 @@ export default function AgentConfigurationDialog({
 
                                     <div className="w-full sm:w-auto">
                                         <Select
-                                            value={enabled ? "1" : "0"}
+                                            value={enabled ? '1' : '0'}
                                             onValueChange={handleEnabledChange}
                                         >
                                             <SelectTrigger
@@ -526,7 +526,7 @@ export default function AgentConfigurationDialog({
                                         <input
                                             type="hidden"
                                             name="enabled"
-                                            value={enabled ? "1" : "0"}
+                                            value={enabled ? '1' : '0'}
                                         />
                                     </div>
                                 </div>
@@ -550,7 +550,7 @@ export default function AgentConfigurationDialog({
                                             id={`${fieldPrefix}-identity`}
                                             label="Identity"
                                             name="identity"
-                                            defaultValue={agent.identity ?? ""}
+                                            defaultValue={agent.identity ?? ''}
                                             error={errors.identity}
                                             placeholder="Describe this Agent's role and identity."
                                         />
@@ -687,7 +687,7 @@ export default function AgentConfigurationDialog({
                                             label="Default Context"
                                             name="default_context"
                                             defaultValue={
-                                                agent.default_context ?? ""
+                                                agent.default_context ?? ''
                                             }
                                             error={errors.default_context}
                                             rows={4}
@@ -699,7 +699,7 @@ export default function AgentConfigurationDialog({
                                             name="workflow_instructions"
                                             defaultValue={
                                                 agent.workflow_instructions ??
-                                                ""
+                                                ''
                                             }
                                             error={errors.workflow_instructions}
                                             rows={4}
@@ -742,7 +742,7 @@ export default function AgentConfigurationDialog({
                                                         onChange={(event) =>
                                                             handleSettingChange(
                                                                 row.id,
-                                                                "key",
+                                                                'key',
                                                                 event.target
                                                                     .value,
                                                             )
@@ -755,7 +755,7 @@ export default function AgentConfigurationDialog({
                                                         htmlFor={`${fieldPrefix}-${row.id}-value`}
                                                         className="sm:sr-only"
                                                     >
-                                                        Setting {index + 1}{" "}
+                                                        Setting {index + 1}{' '}
                                                         value
                                                     </Label>
                                                     <Input
@@ -765,7 +765,7 @@ export default function AgentConfigurationDialog({
                                                         onChange={(event) =>
                                                             handleSettingChange(
                                                                 row.id,
-                                                                "value",
+                                                                'value',
                                                                 event.target
                                                                     .value,
                                                             )
@@ -895,8 +895,8 @@ export default function AgentConfigurationDialog({
                                                         placeholder={
                                                             availableSkills.length ===
                                                             0
-                                                                ? "All skills assigned"
-                                                                : "Add skill"
+                                                                ? 'All skills assigned'
+                                                                : 'Add skill'
                                                         }
                                                     />
                                                 </SelectTrigger>
@@ -916,7 +916,7 @@ export default function AgentConfigurationDialog({
                                         </div>
 
                                         <InputError
-                                            message={errors["skill_ids"]}
+                                            message={errors['skill_ids']}
                                         />
                                     </div>
                                 </ConfigurationSection>
@@ -936,7 +936,7 @@ export default function AgentConfigurationDialog({
                                         settingsClientError !== null
                                     }
                                 >
-                                    {processing ? "Saving..." : "Save changes"}
+                                    {processing ? 'Saving...' : 'Save changes'}
                                 </Button>
                             </DialogFooter>
                         </>
