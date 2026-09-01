@@ -58,46 +58,17 @@ type SettingRow = {
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> =
     {
         codex: [
-            // GPT-5.6
             { value: "gpt-5.6", label: "GPT-5.6 Sol" },
             { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
             { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-
-            // GPT-5 family
-            { value: "gpt-5", label: "GPT-5" },
-
-            // Codex-specialized models
-            { value: "gpt-5-codex", label: "GPT-5 Codex" },
-            { value: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
-            { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
-            { value: "gpt-5-codex-mini", label: "GPT-5 Codex Mini" },
+            { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
         ],
 
         claude: [
-            // Claude 5
             { value: "claude-opus-5", label: "Claude Opus 5" },
             { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-
-            // Claude Opus 4.x
             { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-            { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
-            { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
-            {
-                value: "claude-opus-4-5-20251101",
-                label: "Claude Opus 4.5",
-            },
-
-            // Claude Sonnet 4.x
-            {
-                value: "claude-sonnet-4-6",
-                label: "Claude Sonnet 4.6",
-            },
-            {
-                value: "claude-sonnet-4-5-20250929",
-                label: "Claude Sonnet 4.5",
-            },
-
-            // Claude Haiku
+            { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
             {
                 value: "claude-haiku-4-5-20251001",
                 label: "Claude Haiku 4.5",
