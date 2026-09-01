@@ -17,8 +17,20 @@ test('projects are publicly listed with an empty state', function () {
             ->has('projects', 0));
 });
 
-test('projects are publicly listed', function () {
-    Project::factory()->create(['title' => 'AISF']);
+test('projects are publicly listed with supported card data in title order', function () {
+    $laterProject = Project::factory()->create([
+        'title' => 'Zulu Project',
+        'description' => null,
+        'path' => '/tmp/zulu-project',
+        'enabled' => false,
+    ]);
+
+    $firstProject = Project::factory()->create([
+        'title' => 'AISF',
+        'description' => 'AI Software Factory',
+        'path' => '/tmp/aisf',
+        'enabled' => true,
+    ]);
 
     $response = $this->get(route('projects.index'));
 
@@ -26,8 +38,17 @@ test('projects are publicly listed', function () {
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/index')
-            ->has('projects', 1)
-            ->where('projects.0.title', 'AISF'));
+            ->has('projects', 2)
+            ->where('projects.0.id', $firstProject->id)
+            ->where('projects.0.title', 'AISF')
+            ->where('projects.0.description', 'AI Software Factory')
+            ->where('projects.0.path', '/tmp/aisf')
+            ->where('projects.0.enabled', true)
+            ->where('projects.1.id', $laterProject->id)
+            ->where('projects.1.title', 'Zulu Project')
+            ->where('projects.1.description', null)
+            ->where('projects.1.path', '/tmp/zulu-project')
+            ->where('projects.1.enabled', false));
 });
 
 test('a project can be created for a valid Git repository', function () {
@@ -177,6 +198,9 @@ test('repository inspection reports clean and dirty working trees', function () 
         ->toMatchArray(['branch' => 'main', 'isClean' => false]);
 });
 
+/**
+ * Create a temporary Git repository for Project feature tests.
+ */
 function temporaryGitRepository(): string
 {
     $path = sys_get_temp_dir().'/aisf-project-'.Str::uuid();
@@ -187,6 +211,9 @@ function temporaryGitRepository(): string
     return $path;
 }
 
+/**
+ * Initialize a minimal Git repository containing one committed README.
+ */
 function initializeGitRepository(string $path): void
 {
     Process::path($path)->run(['git', 'init', '--initial-branch=main'])->throw();
