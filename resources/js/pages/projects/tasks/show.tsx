@@ -343,9 +343,17 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
 
     return [...runs, ...standaloneReviews, ...standaloneHandoffs].sort(
         (left, right) => {
+            const leftTimestamp = sortableTimestamp(left.timestamp);
+            const rightTimestamp = sortableTimestamp(right.timestamp);
+
+            if (leftTimestamp === null || rightTimestamp === null) {
+                if (leftTimestamp !== rightTimestamp) {
+                    return leftTimestamp === null ? 1 : -1;
+                }
+            }
+
             const timestampDifference =
-                timestampValue(left.timestamp) -
-                timestampValue(right.timestamp);
+                (rightTimestamp ?? 0) - (leftTimestamp ?? 0);
 
             if (timestampDifference !== 0) {
                 return timestampDifference;
@@ -1509,7 +1517,8 @@ export default function TaskShow({
                                         Agent workflow history
                                     </h2>
                                     <p className="text-muted-foreground mt-1 text-sm">
-                                        Chronological Agent turns with durable
+                                        Reverse-chronological Agent turns with
+                                        durable
                                         handoff and QA evidence.
                                     </p>
                                 </div>
