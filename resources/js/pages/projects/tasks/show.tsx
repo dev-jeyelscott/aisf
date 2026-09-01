@@ -1518,8 +1518,7 @@ export default function TaskShow({
                                     </h2>
                                     <p className="text-muted-foreground mt-1 text-sm">
                                         Reverse-chronological Agent turns with
-                                        durable
-                                        handoff and QA evidence.
+                                        durable handoff and QA evidence.
                                     </p>
                                 </div>
                             </CardHeader>

@@ -7,7 +7,11 @@ import {
     Puzzle,
     Settings2,
 } from 'lucide-react';
-import { edit } from '@/actions/App/Http/Controllers/ProjectAgentController';
+import { useState } from 'react';
+import AgentConfigurationDialog, {
+    type AgentConfigurationAgent,
+    type AgentConfigurationSkill,
+} from '@/components/projects/agents/agent-configuration-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,24 +31,10 @@ type ProjectSummary = {
     title: string;
 };
 
-type Skill = {
-    id: number;
-    name: string;
-};
-
-type Agent = {
-    id: number;
-    role: string;
-    name: string;
-    harness: string;
-    model: string | null;
-    enabled: boolean;
-    skills: Skill[];
-};
-
 type AgentsPageProps = {
     project: ProjectSummary;
-    agents: Agent[];
+    agents: AgentConfigurationAgent[];
+    skills: AgentConfigurationSkill[];
 };
 
 const AGENT_AVATARS: Record<string, string> = {
@@ -58,7 +48,25 @@ const AGENT_AVATARS: Record<string, string> = {
 /**
  * Render the responsive project Agent configuration workspace.
  */
-export default function Agents({ project, agents }: AgentsPageProps) {
+export default function Agents({ project, agents, skills }: AgentsPageProps) {
+    const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
+    const selectedAgent =
+        agents.find((agent) => agent.id === selectedAgentId) ?? null;
+
+    /**
+     * Open the configuration dialog for one Agent.
+     */
+    function handleConfigure(agentId: number): void {
+        setSelectedAgentId(agentId);
+    }
+
+    /**
+     * Close the active Agent configuration dialog.
+     */
+    function handleCloseConfiguration(): void {
+        setSelectedAgentId(null);
+    }
+
     return (
         <>
             <Head title={`${project.title} Agents`} />
@@ -246,19 +254,17 @@ export default function Agents({ project, agents }: AgentsPageProps) {
 
                                             <CardFooter className="mt-auto px-5 pt-5 pb-5">
                                                 <Button
-                                                    asChild
+                                                    type="button"
                                                     className="w-full"
+                                                    aria-label={`Configure ${agent.name}`}
+                                                    onClick={() =>
+                                                        handleConfigure(
+                                                            agent.id,
+                                                        )
+                                                    }
                                                 >
-                                                    <Link
-                                                        href={edit([
-                                                            project,
-                                                            agent,
-                                                        ])}
-                                                        aria-label={`Configure ${agent.name}`}
-                                                    >
-                                                        <Settings2 aria-hidden="true" />
-                                                        Configure
-                                                    </Link>
+                                                    <Settings2 aria-hidden="true" />
+                                                    Configure
                                                 </Button>
                                             </CardFooter>
                                         </Card>
@@ -282,6 +288,17 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                     </div>
                 )}
             </section>
+
+            {selectedAgent && (
+                <AgentConfigurationDialog
+                    key={selectedAgent.id}
+                    project={project}
+                    agent={selectedAgent}
+                    skills={skills}
+                    avatarSrc={AGENT_AVATARS[selectedAgent.role]}
+                    onClose={handleCloseConfiguration}
+                />
+            )}
         </>
     );
 }

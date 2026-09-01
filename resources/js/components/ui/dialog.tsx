@@ -4,30 +4,49 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+type DialogContentProps = React.ComponentProps<typeof DialogPrimitive.Content> & {
+  overlayClassName?: string
+}
+
+/**
+ * Render the Radix dialog root.
+ */
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
+/**
+ * Render a trigger that opens the dialog.
+ */
 function DialogTrigger({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
+/**
+ * Render dialog content inside a Radix portal.
+ */
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
 
+/**
+ * Render an explicit dialog close control.
+ */
 function DialogClose({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Close>) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/**
+ * Render the modal backdrop while allowing callers to override its styling.
+ */
 function DialogOverlay({
   className,
   ...props
@@ -44,14 +63,18 @@ function DialogOverlay({
   )
 }
 
+/**
+ * Render the accessible dialog content and its default close button.
+ */
 function DialogContent({
   className,
   children,
+  overlayClassName,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+}: DialogContentProps) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
@@ -70,6 +93,9 @@ function DialogContent({
   )
 }
 
+/**
+ * Render the dialog heading container.
+ */
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -80,6 +106,9 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Render the dialog action footer.
+ */
 function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -93,6 +122,9 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Render the accessible dialog title.
+ */
 function DialogTitle({
   className,
   ...props
@@ -106,6 +138,9 @@ function DialogTitle({
   )
 }
 
+/**
+ * Render supporting accessible dialog description text.
+ */
 function DialogDescription({
   className,
   ...props

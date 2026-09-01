@@ -14,7 +14,7 @@ Route::get('agent-defaults', [AgentInstructionDefaultController::class, 'index']
 Route::put('agent-defaults', [AgentInstructionDefaultController::class, 'update'])->name('agent-defaults.update');
 
 Route::resource('projects', ProjectController::class)->except('destroy');
-Route::resource('projects.agents', ProjectAgentController::class)->only(['index', 'edit', 'update']);
+Route::resource('projects.agents', ProjectAgentController::class)->only(['index', 'update']);
 Route::resource('projects.skills', ProjectSkillController::class)->except(['show', 'create']);
 Route::post('projects/{project}/work-requests', [WorkRequestController::class, 'store'])->name('projects.work-requests.store');
 Route::post('projects/{project}/work-requests/{work_request}/retry', [WorkRequestController::class, 'retry'])->name('projects.work-requests.retry');

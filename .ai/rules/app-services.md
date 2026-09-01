@@ -1,7 +1,7 @@
 ---
 paths:
-  - app/Services/AgentHarness.php
-  - app/Services/WorkflowDispatcher.php
+    - app/Services/AgentHarness.php
+    - app/Services/WorkflowDispatcher.php
 ---
 
 # App Services
@@ -13,4 +13,5 @@ Every Codex `exec` and Claude `--print` invocation runs with cwd set to the targ
 Fix: AgentHarness::executeCodex passes `-c mcp_servers.boost.command="php" -c mcp_servers.boost.args=[...]`, and executeClaude passes `--mcp-config '{"mcpServers":{"boost":{...}}}'`, both built from `boostMcpArgs()` using `base_path('artisan')` so it resolves regardless of the subprocess cwd. If you add a new harness/provider, replicate this wiring or the same silent-tool-loss failure mode recurs.
 
 ## Recover missing Task handoff projections
+
 Before dispatching eligible pending or waiting Tasks, restore last_handoff from the latest durable TaskHandoff when the projection is missing. This repairs interrupted retries while preserving handoff-driven eligibility.

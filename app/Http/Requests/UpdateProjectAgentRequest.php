@@ -29,6 +29,7 @@ class UpdateProjectAgentRequest extends FormRequest
             'identity' => ['nullable', 'string'],
             'harness' => ['required', 'in:codex,claude'],
             'model' => ['nullable', 'string', 'max:255'],
+            'reasoning' => ['nullable', 'in:low,medium,high'],
             'settings' => ['nullable', 'string', 'max:5000', 'json'],
             'default_context' => ['nullable', 'string'],
             'workflow_instructions' => ['nullable', 'string'],
