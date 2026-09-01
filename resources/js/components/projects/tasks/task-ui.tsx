@@ -200,8 +200,7 @@ export function StatusBadge({ status }: { status: WorkflowStatus }) {
     if (status === 'running') {
         Icon = LoaderCircle;
         className = 'border-primary/30 bg-primary/10 text-primary';
-        iconClassName =
-            'motion-safe:animate-spin motion-reduce:animate-none';
+        iconClassName = 'motion-safe:animate-spin motion-reduce:animate-none';
     }
 
     if (status === 'waiting') {
@@ -267,9 +266,9 @@ export function ReviewStatusBadge({ status }: { status: string }) {
     }
 
     if (
-        status === 'rejected'
-        || status === 'changes_requested'
-        || status === 'failed'
+        status === 'rejected' ||
+        status === 'changes_requested' ||
+        status === 'failed'
     ) {
         return (
             <Badge variant="destructive">

@@ -90,7 +90,7 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                 <li key={project.id} className="min-w-0">
                                     <article
                                         aria-labelledby={titleId}
-                                        className="border-border bg-card flex h-full min-h-72 min-w-0 flex-col rounded-xl border p-5 transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm focus-within:border-ring focus-within:shadow-sm"
+                                        className="border-border bg-card hover:border-foreground/20 focus-within:border-ring flex h-full min-h-72 min-w-0 flex-col rounded-xl border p-5 transition-[border-color,box-shadow] focus-within:shadow-sm hover:shadow-sm"
                                     >
                                         <div className="flex min-w-0 flex-col gap-4">
                                             <div className="bg-muted text-muted-foreground flex size-10 items-center justify-center rounded-lg">
@@ -103,12 +103,12 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                             <div className="flex min-w-0 flex-col gap-1">
                                                 <h2
                                                     id={titleId}
-                                                    className="min-h-10 line-clamp-2 break-words text-base leading-5 font-semibold tracking-tight"
+                                                    className="line-clamp-2 min-h-10 text-base leading-5 font-semibold tracking-tight break-words"
                                                 >
                                                     {project.title}
                                                 </h2>
 
-                                                <p className="text-muted-foreground min-h-10 line-clamp-2 break-words text-sm leading-5">
+                                                <p className="text-muted-foreground line-clamp-2 min-h-10 text-sm leading-5 break-words">
                                                     {project.description ||
                                                         'No description provided.'}
                                                 </p>
@@ -151,9 +151,7 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                                     href={show(project)}
                                                     aria-label={`Open ${project.title}`}
                                                 >
-                                                    <FolderOpen
-                                                        aria-hidden="true"
-                                                    />
+                                                    <FolderOpen aria-hidden="true" />
                                                     Open
                                                 </Link>
                                             </Button>
@@ -167,9 +165,7 @@ export default function ProjectsIndex({ projects }: { projects: Project[] }) {
                                                     href={edit(project)}
                                                     aria-label={`Edit ${project.title}`}
                                                 >
-                                                    <Pencil
-                                                        aria-hidden="true"
-                                                    />
+                                                    <Pencil aria-hidden="true" />
                                                     Edit
                                                 </Link>
                                             </Button>

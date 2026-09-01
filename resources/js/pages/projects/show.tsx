@@ -136,10 +136,10 @@ function ProjectEnabledForm({ project }: { project: Project }) {
 
                     <InputError
                         message={
-                            errors.path
-                            ?? errors.enabled
-                            ?? errors.merge_policy
-                            ?? errors.title
+                            errors.path ??
+                            errors.enabled ??
+                            errors.merge_policy ??
+                            errors.title
                         }
                     />
                 </>
@@ -288,8 +288,8 @@ function ProjectOverview({
                             </div>
 
                             <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6 md:text-base">
-                                {project.description
-                                    || 'No project description provided.'}
+                                {project.description ||
+                                    'No project description provided.'}
                             </p>
                         </div>
                     </div>
@@ -456,8 +456,8 @@ function TaskCard({
                             Blocked
                         </p>
                         <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                            {task.blocked_reason
-                                || 'The Task is recorded with a blocked outcome.'}
+                            {task.blocked_reason ||
+                                'The Task is recorded with a blocked outcome.'}
                         </p>
                     </div>
                 )}
@@ -541,9 +541,7 @@ function TaskCard({
                 </span>
 
                 <Button asChild variant="outline" size="sm">
-                    <Link href={showTask([project.id, task.id])}>
-                        Inspect
-                    </Link>
+                    <Link href={showTask([project.id, task.id])}>Inspect</Link>
                 </Button>
             </CardFooter>
         </Card>
@@ -688,8 +686,8 @@ function TasksSection({
                         const dependency = item.task.depends_on_task_id
                             ? (taskItems.find(
                                   (candidate) =>
-                                      candidate.task.id
-                                      === item.task.depends_on_task_id,
+                                      candidate.task.id ===
+                                      item.task.depends_on_task_id,
                               )?.task ?? null)
                             : null;
 
