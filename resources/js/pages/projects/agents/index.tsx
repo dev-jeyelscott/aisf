@@ -1,30 +1,26 @@
-import { Head, Link } from "@inertiajs/react";
+import { Head, Link } from '@inertiajs/react';
 import {
     Bot,
-    BriefcaseBusiness,
     CircleCheck,
     CircleMinus,
-    Code2,
     Info,
     Puzzle,
     Settings2,
-    ShieldCheck,
-    type LucideIcon,
-} from "lucide-react";
-import { edit } from "@/actions/App/Http/Controllers/ProjectAgentController";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+} from 'lucide-react';
+import { edit } from '@/actions/App/Http/Controllers/ProjectAgentController';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
     CardFooter,
     CardHeader,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { index as projectsIndex, show as showProject } from "@/routes/projects";
-import { index as agentsIndex } from "@/routes/projects/agents";
-import { index as skillsIndex } from "@/routes/projects/skills";
+} from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { index as projectsIndex, show as showProject } from '@/routes/projects';
+import { index as agentsIndex } from '@/routes/projects/agents';
+import { index as skillsIndex } from '@/routes/projects/skills';
 
 type ProjectSummary = {
     id: number;
@@ -52,11 +48,11 @@ type AgentsPageProps = {
 };
 
 const AGENT_AVATARS: Record<string, string> = {
-    project_manager: "/images/agents/project-manager.png",
-    architect: "/images/agents/architect.png",
-    coder: "/images/agents/coder.png",
-    qa: "/images/agents/qa.png",
-    devops: "/images/agents/devops.png",
+    project_manager: '/images/agents/project-manager.png',
+    architect: '/images/agents/architect.png',
+    coder: '/images/agents/coder.png',
+    qa: '/images/agents/qa.png',
+    devops: '/images/agents/devops.png',
 };
 
 /**
@@ -135,13 +131,13 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                     <Badge
                                                         variant={
                                                             agent.enabled
-                                                                ? "secondary"
-                                                                : "outline"
+                                                                ? 'secondary'
+                                                                : 'outline'
                                                         }
                                                         className={
                                                             agent.enabled
                                                                 ? undefined
-                                                                : "text-muted-foreground"
+                                                                : 'text-muted-foreground'
                                                         }
                                                     >
                                                         {agent.enabled ? (
@@ -150,8 +146,8 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                             <CircleMinus aria-hidden="true" />
                                                         )}
                                                         {agent.enabled
-                                                            ? "Enabled"
-                                                            : "Disabled"}
+                                                            ? 'Enabled'
+                                                            : 'Disabled'}
                                                     </Badge>
                                                 </div>
 
@@ -184,8 +180,8 @@ export default function Agents({ project, agents }: AgentsPageProps) {
 
                                                     <p className="text-muted-foreground mt-1 text-sm capitalize">
                                                         {agent.role.replaceAll(
-                                                            "_",
-                                                            " ",
+                                                            '_',
+                                                            ' ',
                                                         )}
                                                     </p>
                                                 </div>
@@ -210,7 +206,7 @@ export default function Agents({ project, agents }: AgentsPageProps) {
                                                         </dt>
                                                         <dd className="min-w-0 text-right font-medium break-words">
                                                             {agent.model ??
-                                                                "Default"}
+                                                                'Default'}
                                                         </dd>
                                                     </div>
                                                 </dl>
@@ -296,7 +292,7 @@ export default function Agents({ project, agents }: AgentsPageProps) {
 Agents.layout = (props: AgentsPageProps) => ({
     breadcrumbs: [
         {
-            title: "Projects",
+            title: 'Projects',
             href: projectsIndex(),
         },
         {
@@ -304,7 +300,7 @@ Agents.layout = (props: AgentsPageProps) => ({
             href: showProject(props.project.id),
         },
         {
-            title: "Agents",
+            title: 'Agents',
             href: agentsIndex(props.project.id),
         },
     ],

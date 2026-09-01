@@ -93,13 +93,32 @@ class TaskController extends Controller
         $this->assertTaskBelongsToProject($project, $task);
 
         if ($task->status === 'failed') {
+            $lastHandoff = $task->last_handoff;
+
+            if (! isset($lastHandoff['id'])) {
+                $handoff = $task->handoffs()->latest('id')->first();
+
+                if ($handoff !== null) {
+                    $lastHandoff = [
+                        'id' => $handoff->id,
+                        'to_role' => $handoff->toProjectAgent->role,
+                        'reason' => $handoff->reason,
+                        'payload' => $handoff->payload,
+                    ];
+                }
+            }
+
             $task->update([
                 'status' => 'pending',
                 'outcome' => null,
                 'protocol_recovery_count' => 0,
                 'blocked_reason' => null,
-                'last_handoff' => null,
+                'last_handoff' => $lastHandoff,
             ]);
+
+            if (isset($lastHandoff['id'])) {
+                ProcessAgentExecution::dispatch($task->fresh());
+            }
         }
 
         return to_route('projects.tasks.show', [$project, $task]);

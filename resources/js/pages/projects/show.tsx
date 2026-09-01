@@ -1,4 +1,4 @@
-import { Form, Head, Link } from "@inertiajs/react";
+import { Form, Head, Link } from '@inertiajs/react';
 import {
     Activity,
     AlertCircle,
@@ -13,25 +13,25 @@ import {
     Play,
     Plus,
     Users,
-} from "lucide-react";
-import { useState } from "react";
-import ProjectController from "@/actions/App/Http/Controllers/ProjectController";
-import InputError from "@/components/input-error";
+} from 'lucide-react';
+import { useState } from 'react';
+import ProjectController from '@/actions/App/Http/Controllers/ProjectController';
+import InputError from '@/components/input-error';
 import {
     humanize,
     shortSha,
     StatusBadge,
     type Task,
     type WorkRequest,
-} from "@/components/projects/tasks/task-ui";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+} from '@/components/projects/tasks/task-ui';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
     CardFooter,
     CardHeader,
-} from "@/components/ui/card";
+} from '@/components/ui/card';
 import {
     Dialog,
     DialogClose,
@@ -40,19 +40,19 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 import {
     Tooltip,
     TooltipContent,
     TooltipProvider,
     TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { edit, index } from "@/routes/projects";
-import { index as agents } from "@/routes/projects/agents";
-import { show as showTask } from "@/routes/projects/tasks";
-import { store as storeWorkRequest } from "@/routes/projects/work-requests";
+} from '@/components/ui/tooltip';
+import { edit, index } from '@/routes/projects';
+import { index as agents } from '@/routes/projects/agents';
+import { show as showTask } from '@/routes/projects/tasks';
+import { store as storeWorkRequest } from '@/routes/projects/work-requests';
 
 type Project = {
     id: number;
@@ -60,7 +60,7 @@ type Project = {
     description: string | null;
     path: string;
     enabled: boolean;
-    merge_policy: "human" | "automatic";
+    merge_policy: 'human' | 'automatic';
 };
 
 type RepositoryStatus = {
@@ -84,10 +84,10 @@ function projectMonogram(title: string): string {
         .filter(Boolean)
         .slice(0, 2)
         .map((part) => part.charAt(0))
-        .join("")
+        .join('')
         .toUpperCase();
 
-    return initials || "P";
+    return initials || 'P';
 }
 
 /**
@@ -105,13 +105,13 @@ function ProjectEnabledForm({ project }: { project: Project }) {
                     <input
                         type="hidden"
                         name="description"
-                        value={project.description ?? ""}
+                        value={project.description ?? ''}
                     />
                     <input type="hidden" name="path" value={project.path} />
                     <input
                         type="hidden"
                         name="enabled"
-                        value={project.enabled ? "0" : "1"}
+                        value={project.enabled ? '0' : '1'}
                     />
                     <input
                         type="hidden"
@@ -131,7 +131,7 @@ function ProjectEnabledForm({ project }: { project: Project }) {
                         ) : (
                             <Play aria-hidden="true" />
                         )}
-                        {project.enabled ? "Pause" : "Resume"}
+                        {project.enabled ? 'Pause' : 'Resume'}
                     </Button>
 
                     <InputError
@@ -175,7 +175,7 @@ function RepositoryMeta({
                         <GitBranch aria-hidden="true" />
                         <span className="text-muted-foreground">Branch</span>
                         <span>
-                            {repositoryStatus.branch ?? "Detached HEAD"}
+                            {repositoryStatus.branch ?? 'Detached HEAD'}
                         </span>
                     </Badge>
 
@@ -216,7 +216,7 @@ function RepositoryMeta({
                             Working tree
                         </span>
                         <span>
-                            {repositoryStatus.isClean ? "Clean" : "Dirty"}
+                            {repositoryStatus.isClean ? 'Clean' : 'Dirty'}
                         </span>
                     </Badge>
                 </div>
@@ -274,8 +274,8 @@ function ProjectOverview({
                                 <Badge
                                     variant={
                                         project.enabled
-                                            ? "outline"
-                                            : "secondary"
+                                            ? 'outline'
+                                            : 'secondary'
                                     }
                                 >
                                     {project.enabled ? (
@@ -283,13 +283,13 @@ function ProjectOverview({
                                     ) : (
                                         <Pause aria-hidden="true" />
                                     )}
-                                    {project.enabled ? "Enabled" : "Paused"}
+                                    {project.enabled ? 'Enabled' : 'Paused'}
                                 </Badge>
                             </div>
 
                             <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6 md:text-base">
                                 {project.description ||
-                                    "No project description provided."}
+                                    'No project description provided.'}
                             </p>
                         </div>
                     </div>
@@ -353,7 +353,7 @@ function NewWorkRequestDialog({
 
                 <Form
                     {...storeWorkRequest.form(project)}
-                    resetOnSuccess={["prompt"]}
+                    resetOnSuccess={['prompt']}
                     onSuccess={() => onOpenChange(false)}
                     className="grid gap-4"
                 >
@@ -418,16 +418,16 @@ function TaskCard({
     const { task, request } = item;
     const recentAgent = task.agent_sessions[0]?.agent ?? null;
     const isBlocked =
-        task.outcome === "blocked" || Boolean(task.blocked_reason);
+        task.outcome === 'blocked' || Boolean(task.blocked_reason);
 
     return (
         <Card
             className={`h-full gap-0 py-0 ${
-                task.status === "running"
-                    ? "ring-primary/25 ring-2"
-                    : task.status === "completed"
-                      ? "shadow-none"
-                      : ""
+                task.status === 'running'
+                    ? 'ring-primary/25 ring-2'
+                    : task.status === 'completed'
+                      ? 'shadow-none'
+                      : ''
             }`}
         >
             <CardHeader className="gap-3 p-4">
@@ -457,7 +457,7 @@ function TaskCard({
                         </p>
                         <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
                             {task.blocked_reason ||
-                                "The Task is recorded with a blocked outcome."}
+                                'The Task is recorded with a blocked outcome.'}
                         </p>
                     </div>
                 )}
@@ -483,7 +483,7 @@ function TaskCard({
                                 aria-hidden="true"
                             />
                             <span>
-                                Next handoff:{" "}
+                                Next handoff:{' '}
                                 <span className="text-foreground capitalize">
                                     {humanize(task.last_handoff.to_role)}
                                 </span>
@@ -498,7 +498,7 @@ function TaskCard({
                                 aria-hidden="true"
                             />
                             <span className="truncate">
-                                Recent Agent:{" "}
+                                Recent Agent:{' '}
                                 <span className="text-foreground">
                                     {recentAgent.name}
                                 </span>
@@ -525,7 +525,7 @@ function TaskCard({
                                 aria-hidden="true"
                             />
                             <span>
-                                Candidate{" "}
+                                Candidate{' '}
                                 <span className="font-mono">
                                     {shortSha(task.candidate_tree_sha)}
                                 </span>
@@ -559,10 +559,10 @@ function TaskEmptyState({
     onNewWorkRequest: () => void;
 }) {
     const activePlanning = workRequests.find((request) =>
-        ["pending", "running", "waiting"].includes(request.status),
+        ['pending', 'running', 'waiting'].includes(request.status),
     );
     const alreadyImplemented = workRequests.find(
-        (request) => request.outcome === "already_implemented",
+        (request) => request.outcome === 'already_implemented',
     );
 
     if (workRequests.length === 0) {
@@ -596,7 +596,7 @@ function TaskEmptyState({
                     Planning in progress
                 </h3>
                 <p className="text-muted-foreground mt-2 max-w-lg text-sm">
-                    Work Request #{activePlanning.id} is currently{" "}
+                    Work Request #{activePlanning.id} is currently{' '}
                     {humanize(activePlanning.status)}. Tasks will appear here
                     when planning produces them.
                 </p>
@@ -756,5 +756,5 @@ export default function ProjectWorkspace({
 }
 
 ProjectWorkspace.layout = {
-    breadcrumbs: [{ title: "Projects", href: index() }],
+    breadcrumbs: [{ title: 'Projects', href: index() }],
 };

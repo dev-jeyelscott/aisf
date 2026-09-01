@@ -1,4 +1,4 @@
-import { Form, Head } from "@inertiajs/react";
+import { Form, Head } from '@inertiajs/react';
 import {
     Activity,
     Bot,
@@ -11,7 +11,7 @@ import {
     Play,
     RotateCcw,
     ShieldCheck,
-} from "lucide-react";
+} from 'lucide-react';
 import {
     type AgentRun,
     type AgentSession,
@@ -26,31 +26,31 @@ import {
     StatusBadge,
     type Task,
     type WorkflowStatus,
-} from "@/components/projects/tasks/task-ui";
-import InputError from "@/components/input-error";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+} from '@/components/projects/tasks/task-ui';
+import InputError from '@/components/input-error';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
     Collapsible,
     CollapsibleContent,
     CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
+} from '@/components/ui/collapsible';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { Spinner } from '@/components/ui/spinner';
 import {
     Tooltip,
     TooltipContent,
     TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useClipboard } from "@/hooks/use-clipboard";
-import { index as projectsIndex, show as showProject } from "@/routes/projects";
+} from '@/components/ui/tooltip';
+import { useClipboard } from '@/hooks/use-clipboard';
+import { index as projectsIndex, show as showProject } from '@/routes/projects';
 import {
     retry as retryTask,
     run as runTask,
     show as showTask,
-} from "@/routes/projects/tasks";
+} from '@/routes/projects/tasks';
 
 type ProjectSummary = {
     id: number;
@@ -82,7 +82,7 @@ type TaskPageProps = {
 };
 
 type RunWorkflowItem = {
-    kind: "run";
+    kind: 'run';
     key: string;
     timestamp: string | null;
     session: AgentSession;
@@ -94,13 +94,13 @@ type RunWorkflowItem = {
 type WorkflowItem =
     | RunWorkflowItem
     | {
-          kind: "handoff";
+          kind: 'handoff';
           key: string;
           timestamp: string | null;
           handoff: HandoffRecord;
       }
     | {
-          kind: "review";
+          kind: 'review';
           key: string;
           timestamp: string | null;
           review: CandidateReview;
@@ -133,10 +133,10 @@ function sortableTimestamp(value: string | null): number | null {
  * Normalize persisted Agent role names before comparing workflow evidence.
  */
 function normalizeRole(value: string | null): string {
-    return (value ?? "")
+    return (value ?? '')
         .trim()
         .toLowerCase()
-        .replace(/[\s-]+/g, "_");
+        .replace(/[\s-]+/g, '_');
 }
 
 /**
@@ -146,10 +146,10 @@ function isQaRole(role: string): boolean {
     const normalizedRole = normalizeRole(role);
 
     return (
-        normalizedRole === "qa" ||
-        normalizedRole.includes("qa_") ||
-        normalizedRole.includes("_qa") ||
-        normalizedRole.includes("quality_assurance")
+        normalizedRole === 'qa' ||
+        normalizedRole.includes('qa_') ||
+        normalizedRole.includes('_qa') ||
+        normalizedRole.includes('quality_assurance')
     );
 }
 
@@ -288,7 +288,7 @@ function findReviewRunIndex(
 function buildWorkflowItems(task: Task): WorkflowItem[] {
     const runs: RunWorkflowItem[] = task.agent_sessions.flatMap((session) =>
         session.runs.map((run) => ({
-            kind: "run" as const,
+            kind: 'run' as const,
             key: `run-${run.id}`,
             timestamp: run.started_at ?? run.finished_at,
             session,
@@ -306,7 +306,7 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
 
         if (runIndex === null) {
             standaloneHandoffs.push({
-                kind: "handoff",
+                kind: 'handoff',
                 key: `handoff-${handoff.id}`,
                 timestamp: handoff.dispatched_at,
                 handoff,
@@ -323,8 +323,8 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
 
         if (runIndex === null) {
             standaloneReviews.push({
-                kind: "review",
-                key: `review-${review.candidate_tree_sha ?? "none"}-${review.created_at ?? index}-${index}`,
+                kind: 'review',
+                key: `review-${review.candidate_tree_sha ?? 'none'}-${review.created_at ?? index}-${index}`,
                 timestamp: review.created_at,
                 review,
             });
@@ -335,7 +335,7 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
         runs[runIndex].reviews.push(review);
     });
 
-    const typeRank: Record<WorkflowItem["kind"], number> = {
+    const typeRank: Record<WorkflowItem['kind'], number> = {
         run: 0,
         review: 1,
         handoff: 2,
@@ -369,11 +369,11 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
 function AgentRoleIcon({ role }: { role: string }) {
     const normalizedRole = normalizeRole(role);
 
-    if (normalizedRole.includes("project_manager")) {
+    if (normalizedRole.includes('project_manager')) {
         return <ClipboardList className="size-4" aria-hidden="true" />;
     }
 
-    if (normalizedRole.includes("coder")) {
+    if (normalizedRole.includes('coder')) {
         return <Code2 className="size-4" aria-hidden="true" />;
     }
 
@@ -403,8 +403,8 @@ function MetadataField({
             <dd
                 className={
                     mono
-                        ? "min-w-0 font-mono text-xs leading-5 break-all"
-                        : "min-w-0 leading-5 break-words"
+                        ? 'min-w-0 font-mono text-xs leading-5 break-all'
+                        : 'min-w-0 leading-5 break-words'
                 }
             >
                 {children}
@@ -459,7 +459,7 @@ function CopyValueButton({ value, label }: { value: string; label: string }) {
                 </Button>
             </TooltipTrigger>
             <TooltipContent>
-                {copied ? "Copied" : `Copy ${label}`}
+                {copied ? 'Copied' : `Copy ${label}`}
             </TooltipContent>
         </Tooltip>
     );
@@ -497,7 +497,7 @@ function formatRoleRoute(
     fromRole: string | null,
     toRole: string | null,
 ): string {
-    return `${humanize(fromRole ?? "unknown")} → ${humanize(toRole ?? "unknown")}`;
+    return `${humanize(fromRole ?? 'unknown')} → ${humanize(toRole ?? 'unknown')}`;
 }
 
 /**
@@ -551,7 +551,7 @@ function QaReviewEvidence({ reviews }: { reviews: CandidateReview[] }) {
         <div className="grid gap-3">
             {reviews.map((review, index) => (
                 <div
-                    key={`${review.candidate_tree_sha ?? "none"}-${review.created_at ?? index}-${index}`}
+                    key={`${review.candidate_tree_sha ?? 'none'}-${review.created_at ?? index}-${index}`}
                     className="border-border bg-muted/20 grid gap-3 rounded-md border p-3"
                 >
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -612,13 +612,13 @@ function AgentRunTimelineRow({
     const latestHandoff = handoffs[handoffs.length - 1] ?? null;
     const latestReview = reviews[reviews.length - 1] ?? null;
     const hasReviewNeedingAttention = reviews.some(
-        (review) => review.status !== "approved",
+        (review) => review.status !== 'approved',
     );
 
     const defaultOpen =
-        run.status === "failed" ||
-        run.reconciliation_status === "recoverable" ||
-        run.reconciliation_status === "terminal" ||
+        run.status === 'failed' ||
+        run.reconciliation_status === 'recoverable' ||
+        run.reconciliation_status === 'terminal' ||
         run.failure_class !== null ||
         hasReviewNeedingAttention;
 
@@ -687,20 +687,20 @@ function AgentRunTimelineRow({
                                     <p className="text-muted-foreground mt-2 line-clamp-1 text-xs">
                                         <span className="font-medium">
                                             Handoff:
-                                        </span>{" "}
+                                        </span>{' '}
                                         <span className="capitalize">
                                             {formatRoleRoute(
                                                 latestHandoff.from_role,
                                                 latestHandoff.to_role,
                                             )}
                                         </span>
-                                        {" · "}
+                                        {' · '}
                                         <span className="capitalize">
                                             {humanize(latestHandoff.reason)}
                                         </span>
                                         {handoffs.length > 1
                                             ? ` · +${handoffs.length - 1} more`
-                                            : ""}
+                                            : ''}
                                     </p>
                                 )}
                             </div>
@@ -732,7 +732,7 @@ function AgentRunTimelineRow({
                             </p>
                             <p className="text-sm leading-6 break-words whitespace-pre-wrap">
                                 {run.output_summary ??
-                                    "No output summary was recorded."}
+                                    'No output summary was recorded.'}
                             </p>
                         </div>
 
@@ -745,8 +745,8 @@ function AgentRunTimelineRow({
 
                             <MetadataField label="Continuity">
                                 {session.has_provider_continuity
-                                    ? "Provider resume available"
-                                    : "Logical continuity only"}
+                                    ? 'Provider resume available'
+                                    : 'Logical continuity only'}
                             </MetadataField>
 
                             <MetadataField label="Context sources">
@@ -754,11 +754,11 @@ function AgentRunTimelineRow({
                             </MetadataField>
 
                             <MetadataField label="Harness">
-                                {run.harness ?? "Not recorded"}
+                                {run.harness ?? 'Not recorded'}
                             </MetadataField>
 
                             <MetadataField label="Model">
-                                {run.model ?? "Not recorded"}
+                                {run.model ?? 'Not recorded'}
                             </MetadataField>
 
                             <MetadataField label="Started">
@@ -768,18 +768,18 @@ function AgentRunTimelineRow({
                             <MetadataField label="Finished">
                                 {run.finished_at
                                     ? formatTimestamp(run.finished_at)
-                                    : "Still running"}
+                                    : 'Still running'}
                             </MetadataField>
 
                             <MetadataField label="Exit code">
-                                {run.exit_code ?? "Not recorded"}
+                                {run.exit_code ?? 'Not recorded'}
                             </MetadataField>
 
                             <MetadataField label="Reconciliation">
                                 <span className="capitalize">
                                     {run.reconciliation_status
                                         ? humanize(run.reconciliation_status)
-                                        : "Not recorded"}
+                                        : 'Not recorded'}
                                 </span>
                             </MetadataField>
 
@@ -787,7 +787,7 @@ function AgentRunTimelineRow({
                                 <span className="capitalize">
                                     {run.failure_class
                                         ? humanize(run.failure_class)
-                                        : "None recorded"}
+                                        : 'None recorded'}
                                 </span>
                             </MetadataField>
                         </dl>
@@ -957,7 +957,7 @@ function WorkflowTimeline({ task }: { task: Task }) {
                         aria-hidden="true"
                     />
 
-                    {item.kind === "run" && (
+                    {item.kind === 'run' && (
                         <AgentRunTimelineRow
                             session={item.session}
                             run={item.run}
@@ -966,11 +966,11 @@ function WorkflowTimeline({ task }: { task: Task }) {
                         />
                     )}
 
-                    {item.kind === "handoff" && (
+                    {item.kind === 'handoff' && (
                         <StandaloneHandoffTimelineRow handoff={item.handoff} />
                     )}
 
-                    {item.kind === "review" && (
+                    {item.kind === 'review' && (
                         <StandaloneReviewTimelineRow review={item.review} />
                     )}
                 </div>
@@ -985,7 +985,7 @@ function WorkflowTimeline({ task }: { task: Task }) {
  */
 function hasWaitingInstruction(task: Task): boolean {
     return (
-        task.status === "waiting" &&
+        task.status === 'waiting' &&
         Boolean(task.last_handoff?.id) &&
         Boolean(task.last_handoff?.note)
     );
@@ -1007,8 +1007,8 @@ function TaskActionButtons({
 
     const canRun =
         hasDispatchableHandoff &&
-        (task.status === "pending" ||
-            (task.status === "waiting" && !waitingWithInstruction));
+        (task.status === 'pending' ||
+            (task.status === 'waiting' && !waitingWithInstruction));
 
     return (
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
@@ -1031,7 +1031,7 @@ function TaskActionButtons({
                 </Form>
             )}
 
-            {task.status === "failed" && (
+            {task.status === 'failed' && (
                 <Form {...retryTask.form([project.id, task.id])}>
                     {({ processing }) => (
                         <Button
@@ -1159,7 +1159,7 @@ function TaskHeader({
                         <p className="text-muted-foreground mt-2 max-w-4xl text-sm leading-6">
                             <span className="text-foreground font-medium">
                                 Objective:
-                            </span>{" "}
+                            </span>{' '}
                             {task.objective}
                         </p>
                     </div>
@@ -1252,7 +1252,7 @@ function TaskDetails({
                             <span className="capitalize">
                                 {task.outcome
                                     ? humanize(task.outcome)
-                                    : "Not recorded"}
+                                    : 'Not recorded'}
                             </span>
                         </MetadataField>
 
@@ -1261,11 +1261,11 @@ function TaskDetails({
                                 ? `Task #${dependency.id}: ${dependency.title}`
                                 : task.depends_on_task_id
                                   ? `Task #${task.depends_on_task_id}`
-                                  : "None"}
+                                  : 'None'}
                         </MetadataField>
 
                         <MetadataField label="Repair cycles">
-                            {task.repair_cycle_count} /{" "}
+                            {task.repair_cycle_count} /{' '}
                             {task.repair_cycle_limit}
                         </MetadataField>
 
@@ -1291,16 +1291,16 @@ function TaskDetails({
                                         : `To ${humanize(task.last_handoff.to_role)}`}
                                 </span>
                             ) : (
-                                "None"
+                                'None'
                             )}
                         </MetadataField>
 
                         {(task.blocked_reason ||
-                            task.outcome === "blocked") && (
+                            task.outcome === 'blocked') && (
                             <MetadataField label="Blocked reason">
                                 <span className="text-destructive break-words whitespace-pre-wrap">
                                     {task.blocked_reason ||
-                                        "Blocked without an additional recorded reason."}
+                                        'Blocked without an additional recorded reason.'}
                                 </span>
                             </MetadataField>
                         )}
@@ -1312,14 +1312,14 @@ function TaskDetails({
                 <DetailsSection title="Candidate & Repository">
                     <dl className="grid gap-2.5">
                         <MetadataField label="Branch" mono>
-                            {task.branch_name ?? "Not recorded"}
+                            {task.branch_name ?? 'Not recorded'}
                         </MetadataField>
 
                         <MetadataField label="Candidate kind">
                             <span className="capitalize">
                                 {task.candidate_kind
                                     ? humanize(task.candidate_kind)
-                                    : "Not recorded"}
+                                    : 'Not recorded'}
                             </span>
                         </MetadataField>
 
@@ -1338,7 +1338,7 @@ function TaskDetails({
                         </MetadataField>
 
                         <MetadataField label="Worktree" mono>
-                            {task.worktree_path ?? "Not recorded"}
+                            {task.worktree_path ?? 'Not recorded'}
                         </MetadataField>
 
                         <MetadataField label="Changed files">
@@ -1435,7 +1435,7 @@ function TaskDetails({
                             <span className="capitalize">
                                 {workRequest.outcome
                                     ? humanize(workRequest.outcome)
-                                    : "Not recorded"}
+                                    : 'Not recorded'}
                             </span>
                         </MetadataField>
 
@@ -1540,7 +1540,7 @@ export default function TaskShow({
 TaskShow.layout = (props: TaskPageProps) => ({
     breadcrumbs: [
         {
-            title: "Projects",
+            title: 'Projects',
             href: projectsIndex(),
         },
         {

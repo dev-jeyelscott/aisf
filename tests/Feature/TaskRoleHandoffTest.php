@@ -153,6 +153,7 @@ test('the dispatcher queues only a Task with an accepted PM to Coder handoff', f
         [],
         $run->execution_token,
     );
+    $task->update(['last_handoff' => null]);
     $workRequest->update(['status' => 'completed']);
 
     app()->call([app(DispatchWorkflow::class), 'handle']);

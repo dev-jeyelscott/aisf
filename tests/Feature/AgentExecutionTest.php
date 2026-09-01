@@ -388,18 +388,21 @@ test('an Agent execution failure retries then marks the Task failed with an oper
 });
 
 test('an operator Retry re-enters a failed Task as pending', function () {
+    Queue::fake();
     [$project, , $task] = feature09TaskFixture();
-    $task->update(['status' => 'failed', 'outcome' => 'blocked', 'protocol_recovery_count' => 3, 'blocked_reason' => 'Implementation failed.', 'last_handoff' => ['to_role' => 'implementation_specialist']]);
+    $task->update(['status' => 'failed', 'outcome' => 'blocked', 'protocol_recovery_count' => 3, 'blocked_reason' => 'Implementation failed.', 'last_handoff' => ['id' => 42, 'to_role' => 'coder', 'reason' => 'ci_failed']]);
 
     $response = $this->post(route('projects.tasks.retry', [$project, $task]));
 
-    $response->assertRedirect(route('projects.show', $project));
+    $response->assertRedirect(route('projects.tasks.show', [$project, $task]));
 
     expect($task->refresh()->status)->toBe('pending')
         ->and($task->outcome)->toBeNull()
         ->and($task->protocol_recovery_count)->toBe(0)
         ->and($task->blocked_reason)->toBeNull()
-        ->and($task->last_handoff)->toBeNull();
+        ->and($task->last_handoff['id'])->toBe(42);
+
+    Queue::assertPushed(ProcessAgentExecution::class, fn (ProcessAgentExecution $job): bool => $job->subject->is($task));
 });
 
 test('an operator Retry re-enters a failed WorkRequest as pending', function () {

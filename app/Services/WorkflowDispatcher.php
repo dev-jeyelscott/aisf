@@ -26,6 +26,7 @@ class WorkflowDispatcher
         }
 
         $this->completeFinishedWorkRequests($project);
+        $this->restoreMissingTaskHandoffs($project);
 
         $workRequest = WorkRequest::query()
             ->where('project_id', $project->id)
@@ -107,6 +108,35 @@ class WorkflowDispatcher
         return $this->tasksForProject($project)
             ->where('status', 'running')
             ->exists();
+    }
+
+    private function restoreMissingTaskHandoffs(Project $project): void
+    {
+        $this->tasksForProject($project)
+            ->whereIn('status', ['pending', 'waiting'])
+            ->whereNull('last_handoff')
+            ->whereHas('handoffs')
+            ->where(function ($query): void {
+                $query->whereNull('depends_on_task_id')
+                    ->orWhereHas('dependsOn', fn ($dependency) => $dependency->where('status', 'completed'));
+            })
+            ->get()
+            ->each(function (Task $task): void {
+                $handoff = $task->handoffs()->latest('id')->first();
+
+                if ($handoff === null) {
+                    return;
+                }
+
+                $task->update([
+                    'last_handoff' => [
+                        'id' => $handoff->id,
+                        'to_role' => $handoff->toProjectAgent->role,
+                        'reason' => $handoff->reason,
+                        'payload' => $handoff->payload,
+                    ],
+                ]);
+            });
     }
 
     private function claimAndDispatch(Task|WorkRequest $subject): void
