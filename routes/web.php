@@ -18,6 +18,7 @@ Route::resource('projects.agents', ProjectAgentController::class)->only(['index'
 Route::resource('projects.skills', ProjectSkillController::class)->except(['show', 'create']);
 Route::post('projects/{project}/work-requests', [WorkRequestController::class, 'store'])->name('projects.work-requests.store');
 Route::post('projects/{project}/work-requests/{work_request}/retry', [WorkRequestController::class, 'retry'])->name('projects.work-requests.retry');
+Route::get('projects/{project}/tasks/{task}', [TaskController::class, 'show'])->name('projects.tasks.show');
 Route::post('projects/{project}/tasks/{task}/run', [TaskController::class, 'run'])->name('projects.tasks.run');
 Route::post('projects/{project}/tasks/{task}/retry', [TaskController::class, 'retry'])->name('projects.tasks.retry');
 Route::post('webhooks/github/{project}', GithubWebhookController::class)->name('webhooks.github');

@@ -4,9 +4,6 @@ import {
     AlertCircle,
     Ban,
     CheckCircle2,
-    CircleDashed,
-    Clock3,
-    ExternalLink,
     FolderGit2,
     GitBranch,
     GitCommitHorizontal,
@@ -15,13 +12,18 @@ import {
     Pencil,
     Play,
     Plus,
-    RotateCcw,
     Users,
-    XCircle,
 } from 'lucide-react';
 import { useState } from 'react';
 import ProjectController from '@/actions/App/Http/Controllers/ProjectController';
 import InputError from '@/components/input-error';
+import {
+    humanize,
+    shortSha,
+    StatusBadge,
+    type Task,
+    type WorkRequest,
+} from '@/components/projects/tasks/task-ui';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,7 +40,6 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-    DialogTrigger,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
@@ -50,16 +51,8 @@ import {
 } from '@/components/ui/tooltip';
 import { edit, index } from '@/routes/projects';
 import { index as agents } from '@/routes/projects/agents';
-import { retry as retryTask, run as runTask } from '@/routes/projects/tasks';
+import { show as showTask } from '@/routes/projects/tasks';
 import { store as storeWorkRequest } from '@/routes/projects/work-requests';
-
-type WorkflowStatus =
-    | 'pending'
-    | 'running'
-    | 'waiting'
-    | 'completed'
-    | 'failed'
-    | 'cancelled';
 
 type Project = {
     id: number;
@@ -76,149 +69,13 @@ type RepositoryStatus = {
     isClean: boolean;
 };
 
-type ContextSource = {
-    type: string;
-    label: string;
-};
-
-type AgentRun = {
-    id: number;
-    attempt: number;
-    purpose: string;
-    status: string;
-    reconciliation_status: 'satisfied' | 'recoverable' | 'terminal' | null;
-    failure_class:
-        | 'protocol_recoverable'
-        | 'infrastructure_recoverable'
-        | 'engineering_repair'
-        | 'terminal_blocked'
-        | null;
-    context_mode: 'initial' | 'delta';
-    submitted_input: string;
-    context_sources: ContextSource[];
-    output_summary: string | null;
-    exit_code: number | null;
-    harness: string | null;
-    model: string | null;
-    started_at: string | null;
-    finished_at: string | null;
-};
-
-type AgentSession = {
-    id: number;
-    has_provider_continuity: boolean;
-    agent: {
-        id: number;
-        name: string;
-        role: string;
-    };
-    runs: AgentRun[];
-};
-
-type Handoff = {
-    to_role?: string | null;
-    note?: string | null;
-} | null;
-
-type HandoffRecord = {
-    id: number;
-    from_role: string | null;
-    to_role: string | null;
-    reason: string;
-    dispatched_at: string | null;
-};
-
-type CandidateReview = {
-    candidate_tree_sha: string | null;
-    status: string;
-    summary: string | null;
-    findings: unknown;
-    created_at: string | null;
-};
-
-type Task = {
-    id: number;
-    depends_on_task_id: number | null;
-    position: number;
-    title: string;
-    objective: string;
-    implementation_spec: string;
-    status: WorkflowStatus;
-    outcome: 'implemented' | 'no_change' | 'blocked' | null;
-    protocol_recovery_count: number;
-    candidate_tree_sha: string | null;
-    candidate_kind: 'changes' | 'no_change' | null;
-    branch_name: string | null;
-    worktree_path: string | null;
-    blocked_reason: string | null;
-    last_handoff: Handoff;
-    commit_sha: string | null;
-    pull_request_url: string | null;
-    changed_files: string[];
-    candidate_reviews: CandidateReview[];
-    agent_sessions: AgentSession[];
-    handoffs: HandoffRecord[];
-    repair_cycle_count: number;
-    repair_cycle_limit: number;
-};
-
-type WorkRequest = {
-    id: number;
-    prompt: string;
-    status: WorkflowStatus;
-    outcome: 'implemented' | 'already_implemented' | 'blocked' | null;
-    protocol_recovery_count: number;
-    summary: string | null;
-    evidence: string[] | null;
-    failure_reason: string | null;
-    last_handoff: Handoff;
-    source_type: 'manual' | 'github' | 'notion';
-    source_url: string | null;
-    agent_sessions: AgentSession[];
-    tasks: Task[];
-};
-
 type TaskItem = {
     task: Task;
     request: WorkRequest;
 };
 
 /**
- * Convert persisted enum-like strings into readable operator labels.
- */
-function humanize(value: string): string {
-    return value.replace(/_/g, ' ');
-}
-
-/**
- * Format persisted execution timestamps for the operator's browser locale.
- */
-function formatTimestamp(value: string | null): string {
-    if (!value) {
-        return 'In progress';
-    }
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-        return value;
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-    }).format(date);
-}
-
-/**
- * Return a compact SHA while preserving the full value elsewhere.
- */
-function shortSha(value: string): string {
-    return value.slice(0, 8);
-}
-
-/**
- * Generate a deterministic visual monogram from the persisted project title.
+ * Generate a deterministic visual monogram from the persisted Project title.
  */
 function projectMonogram(title: string): string {
     const initials = title
@@ -234,334 +91,7 @@ function projectMonogram(title: string): string {
 }
 
 /**
- * Determine whether an arbitrary persisted status is one of the workflow states
- * supported by Tasks and WorkRequests.
- */
-function isWorkflowStatus(value: string): value is WorkflowStatus {
-    return [
-        'pending',
-        'running',
-        'waiting',
-        'completed',
-        'failed',
-        'cancelled',
-    ].includes(value as WorkflowStatus);
-}
-
-/**
- * Serialize QA findings without assuming a narrower persistence shape than the
- * backend currently guarantees.
- */
-function serializeFindings(findings: unknown): string {
-    if (findings === null || findings === undefined) {
-        return 'No findings recorded.';
-    }
-
-    if (typeof findings === 'string') {
-        return findings;
-    }
-
-    if (typeof findings === 'number' || typeof findings === 'boolean') {
-        return String(findings);
-    }
-
-    return JSON.stringify(findings, null, 2) ?? 'No findings recorded.';
-}
-
-/**
- * Render a canonical workflow status using semantic application treatments and
- * an explicit icon so meaning never relies on color alone.
- */
-function StatusBadge({ status }: { status: WorkflowStatus }) {
-    let Icon = CircleDashed;
-    let variant: 'outline' | 'secondary' | 'destructive' = 'outline';
-    let className = 'text-muted-foreground';
-    let iconClassName = '';
-
-    if (status === 'running') {
-        Icon = LoaderCircle;
-        className = 'border-primary/30 bg-primary/10 text-primary';
-        iconClassName = 'motion-safe:animate-spin motion-reduce:animate-none';
-    }
-
-    if (status === 'waiting') {
-        Icon = Clock3;
-        variant = 'secondary';
-        className = 'text-foreground';
-    }
-
-    if (status === 'completed') {
-        Icon = CheckCircle2;
-        variant = 'secondary';
-        className = 'text-foreground';
-    }
-
-    if (status === 'failed') {
-        Icon = XCircle;
-        variant = 'destructive';
-        className = '';
-    }
-
-    if (status === 'cancelled') {
-        Icon = Ban;
-        className = 'text-muted-foreground opacity-80';
-    }
-
-    return (
-        <Badge variant={variant} className={className}>
-            <Icon className={iconClassName} aria-hidden="true" />
-            <span className="capitalize">{humanize(status)}</span>
-        </Badge>
-    );
-}
-
-/**
- * Render an AgentRun status while reusing canonical Task status treatment when
- * its persisted value maps cleanly to one.
- */
-function RunStatusBadge({ status }: { status: string }) {
-    const normalizedStatus =
-        status === 'succeeded'
-            ? 'completed'
-            : isWorkflowStatus(status)
-              ? status
-              : null;
-
-    if (normalizedStatus) {
-        return <StatusBadge status={normalizedStatus} />;
-    }
-
-    return <Badge variant="outline">{humanize(status)}</Badge>;
-}
-
-/**
- * Render a compact QA review status without inventing new Task workflow states.
- */
-function ReviewStatusBadge({ status }: { status: string }) {
-    if (status === 'approved') {
-        return (
-            <Badge variant="secondary">
-                <CheckCircle2 aria-hidden="true" />
-                {humanize(status)}
-            </Badge>
-        );
-    }
-
-    if (
-        status === 'rejected' ||
-        status === 'changes_requested' ||
-        status === 'failed'
-    ) {
-        return (
-            <Badge variant="destructive">
-                <XCircle aria-hidden="true" />
-                {humanize(status)}
-            </Badge>
-        );
-    }
-
-    return <Badge variant="outline">{humanize(status)}</Badge>;
-}
-
-/**
- * Render one label/value pair in inspection metadata grids.
- */
-function MetadataField({
-    label,
-    children,
-    mono = false,
-}: {
-    label: string;
-    children: React.ReactNode;
-    mono?: boolean;
-}) {
-    return (
-        <div className="min-w-0">
-            <dt className="text-muted-foreground text-xs">{label}</dt>
-            <dd
-                className={`mt-1 text-sm ${
-                    mono ? 'font-mono break-all' : 'break-words'
-                }`}
-            >
-                {children}
-            </dd>
-        </div>
-    );
-}
-
-/**
- * Render a consistently styled progressive-disclosure inspection section.
- */
-function InspectionSection({
-    title,
-    children,
-}: {
-    title: string;
-    children: React.ReactNode;
-}) {
-    return (
-        <section className="bg-muted/40 rounded-lg p-4">
-            <h3 className="text-sm font-semibold">{title}</h3>
-            <div className="mt-3">{children}</div>
-        </section>
-    );
-}
-
-/**
- * Render logical Agent continuity and durable invocation metadata inside
- * WorkRequest or Task inspection surfaces.
- */
-function AgentSessionActivity({
-    sessions,
-    emptyLabel,
-}: {
-    sessions: AgentSession[];
-    emptyLabel: string;
-}) {
-    if (sessions.length === 0) {
-        return <p className="text-muted-foreground text-sm">{emptyLabel}</p>;
-    }
-
-    return (
-        <div className="grid gap-3">
-            {sessions.map((session) => (
-                <article
-                    key={session.id}
-                    className="bg-background/70 rounded-lg p-3"
-                >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                            <p className="text-sm font-medium">
-                                {session.agent.name}
-                            </p>
-                            <p className="text-muted-foreground mt-0.5 text-xs capitalize">
-                                {humanize(session.agent.role)} · Logical session
-                                #{session.id}
-                            </p>
-                        </div>
-
-                        <Badge variant="outline">
-                            {session.has_provider_continuity
-                                ? 'Provider resume available'
-                                : 'Logical continuity only'}
-                        </Badge>
-                    </div>
-
-                    <div className="mt-3 grid gap-3">
-                        {session.runs.map((run) => (
-                            <div
-                                key={run.id}
-                                className="border-border/70 rounded-md border p-3"
-                            >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-sm font-medium">
-                                            Run {run.attempt}
-                                        </span>
-                                        <RunStatusBadge status={run.status} />
-                                    </div>
-
-                                    <span className="text-muted-foreground text-xs capitalize">
-                                        {humanize(run.purpose)}
-                                    </span>
-                                </div>
-
-                                {run.output_summary && (
-                                    <p className="text-muted-foreground mt-3 text-sm">
-                                        {run.output_summary}
-                                    </p>
-                                )}
-
-                                {(run.reconciliation_status ||
-                                    run.failure_class) && (
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                        {run.reconciliation_status && (
-                                            <Badge variant="outline">
-                                                {humanize(
-                                                    run.reconciliation_status,
-                                                )}
-                                            </Badge>
-                                        )}
-                                        {run.failure_class && (
-                                            <Badge variant="outline">
-                                                {humanize(run.failure_class)}
-                                            </Badge>
-                                        )}
-                                    </div>
-                                )}
-
-                                <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                    <MetadataField label="Context mode">
-                                        <span className="capitalize">
-                                            {humanize(run.context_mode)}
-                                        </span>
-                                    </MetadataField>
-                                    <MetadataField label="Started">
-                                        {formatTimestamp(run.started_at)}
-                                    </MetadataField>
-                                    <MetadataField label="Finished">
-                                        {formatTimestamp(run.finished_at)}
-                                    </MetadataField>
-                                    <MetadataField label="Exit code">
-                                        {run.exit_code ?? 'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField label="Harness">
-                                        {run.harness ?? 'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField label="Model">
-                                        {run.model ?? 'Unavailable'}
-                                    </MetadataField>
-                                </dl>
-
-                                {run.context_sources.length > 0 && (
-                                    <div className="mt-3">
-                                        <p className="text-muted-foreground text-xs">
-                                            Context sources
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            {run.context_sources.map(
-                                                (source, index) => (
-                                                    <Badge
-                                                        key={`${run.id}-context-${index}`}
-                                                        variant="outline"
-                                                    >
-                                                        {source.label}
-                                                        <span className="text-muted-foreground">
-                                                            ·{' '}
-                                                            {humanize(
-                                                                source.type,
-                                                            )}
-                                                        </span>
-                                                    </Badge>
-                                                ),
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <details className="border-border mt-3 rounded-md border">
-                                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                                        Inspect submitted input
-                                    </summary>
-                                    <div className="border-border border-t p-3">
-                                        <pre className="bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
-                                            {run.submitted_input}
-                                        </pre>
-                                    </div>
-                                </details>
-                            </div>
-                        ))}
-                    </div>
-                </article>
-            ))}
-        </div>
-    );
-}
-
-/**
- * Submit the existing complete Project update contract while changing only the
- * enabled state so Pause and Resume remain aliases for existing backend
- * behavior rather than a new workflow.
+ * Submit the complete Project update contract while changing only enabled state.
  */
 function ProjectEnabledForm({ project }: { project: Project }) {
     return (
@@ -606,10 +136,10 @@ function ProjectEnabledForm({ project }: { project: Project }) {
 
                     <InputError
                         message={
-                            errors.path ??
-                            errors.enabled ??
-                            errors.merge_policy ??
-                            errors.title
+                            errors.path
+                            ?? errors.enabled
+                            ?? errors.merge_policy
+                            ?? errors.title
                         }
                     />
                 </>
@@ -619,8 +149,7 @@ function ProjectEnabledForm({ project }: { project: Project }) {
 }
 
 /**
- * Render compact repository state using only fields currently supplied by
- * RepositoryInspector and ProjectController.
+ * Render compact repository state from the existing RepositoryInspector payload.
  */
 function RepositoryMeta({
     project,
@@ -713,8 +242,7 @@ function RepositoryMeta({
 }
 
 /**
- * Render the dominant project identity, repository context and supported
- * project-level controls.
+ * Render the dominant Project identity, repository context, and supported controls.
  */
 function ProjectOverview({
     project,
@@ -760,8 +288,8 @@ function ProjectOverview({
                             </div>
 
                             <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6 md:text-base">
-                                {project.description ||
-                                    'No project description provided.'}
+                                {project.description
+                                    || 'No project description provided.'}
                             </p>
                         </div>
                     </div>
@@ -800,8 +328,7 @@ function ProjectOverview({
 }
 
 /**
- * Render the existing manual WorkRequest submission contract inside an
- * accessible controlled dialog.
+ * Render the existing manual WorkRequest submission contract in a dialog.
  */
 function NewWorkRequestDialog({
     project,
@@ -877,449 +404,7 @@ function NewWorkRequestDialog({
 }
 
 /**
- * Render the existing Task run, continue and retry forms using exactly the
- * statuses supported by the current TaskController.
- */
-function TaskExecutionActions({
-    project,
-    task,
-}: {
-    project: Project;
-    task: Task;
-}) {
-    const canRun = task.status === 'pending' || task.status === 'waiting';
-
-    return (
-        <div className="grid gap-3">
-            {task.status === 'failed' && (
-                <div className="border-destructive/30 bg-destructive/5 rounded-lg border p-3">
-                    <p className="text-destructive text-sm font-medium">
-                        Task failed
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                        {task.blocked_reason || 'No failure reason recorded.'}
-                    </p>
-
-                    <Form
-                        {...retryTask.form([project.id, task.id])}
-                        className="mt-3"
-                    >
-                        {({ processing }) => (
-                            <Button
-                                type="submit"
-                                size="sm"
-                                variant="outline"
-                                disabled={processing}
-                            >
-                                {processing ? (
-                                    <Spinner />
-                                ) : (
-                                    <RotateCcw aria-hidden="true" />
-                                )}
-                                Retry
-                            </Button>
-                        )}
-                    </Form>
-                </div>
-            )}
-
-            {canRun && (
-                <Form {...runTask.form([project.id, task.id])}>
-                    {({ processing }) => (
-                        <Button type="submit" size="sm" disabled={processing}>
-                            {processing ? (
-                                <Spinner />
-                            ) : (
-                                <Play aria-hidden="true" />
-                            )}
-                            Run now
-                        </Button>
-                    )}
-                </Form>
-            )}
-
-            {task.status === 'waiting' && task.last_handoff?.note && (
-                <div className="bg-muted/60 rounded-lg p-3">
-                    <p className="text-sm font-medium">
-                        Agent handoff
-                        {task.last_handoff.to_role
-                            ? ` to ${humanize(task.last_handoff.to_role)}`
-                            : ''}
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
-                        {task.last_handoff.note}
-                    </p>
-
-                    <Form
-                        {...runTask.form([project.id, task.id])}
-                        className="mt-3 grid gap-2"
-                    >
-                        {({ processing, errors }) => (
-                            <>
-                                <Label
-                                    htmlFor={`task-${task.id}-operator-instruction`}
-                                    className="text-xs"
-                                >
-                                    Optional operator instruction
-                                </Label>
-                                <textarea
-                                    id={`task-${task.id}-operator-instruction`}
-                                    name="operator_instruction"
-                                    placeholder="Instruction for the next Agent turn…"
-                                    className="border-input bg-background focus-visible:ring-ring min-h-20 rounded-md border p-2 text-sm outline-none focus-visible:ring-2"
-                                />
-                                <InputError
-                                    message={errors.operator_instruction}
-                                />
-                                <Button
-                                    type="submit"
-                                    size="sm"
-                                    className="w-fit"
-                                    disabled={processing}
-                                >
-                                    {processing && <Spinner />}
-                                    Continue
-                                </Button>
-                            </>
-                        )}
-                    </Form>
-                </div>
-            )}
-        </div>
-    );
-}
-
-/**
- * Render all durable Task information inside progressive disclosure rather than
- * forcing diagnostic detail onto the default card grid.
- */
-function TaskInspectionDialog({
-    project,
-    task,
-    request,
-    dependency,
-}: {
-    project: Project;
-    task: Task;
-    request: WorkRequest;
-    dependency: Task | null;
-}) {
-    const hasCandidateMetadata =
-        task.branch_name !== null ||
-        task.worktree_path !== null ||
-        task.candidate_tree_sha !== null ||
-        task.commit_sha !== null ||
-        task.pull_request_url !== null ||
-        task.changed_files.length > 0;
-
-    return (
-        <Dialog>
-            <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                    Inspect
-                </Button>
-            </DialogTrigger>
-
-            <DialogContent className="max-h-[85vh] gap-0 overflow-hidden p-0 sm:max-w-5xl">
-                <DialogHeader className="p-6 pb-4">
-                    <div className="flex flex-wrap items-center gap-2 pr-8">
-                        <StatusBadge status={task.status} />
-                        {task.outcome === 'blocked' && (
-                            <Badge variant="destructive">
-                                <Ban aria-hidden="true" />
-                                Blocked
-                            </Badge>
-                        )}
-                    </div>
-                    <DialogTitle className="text-xl">{task.title}</DialogTitle>
-                    <DialogDescription>
-                        Task #{task.id} · Planning position {task.position} ·
-                        Work Request #{request.id}
-                    </DialogDescription>
-                </DialogHeader>
-
-                <div className="grid min-h-0 gap-4 overflow-y-auto px-6 pb-6">
-                    <InspectionSection title="Overview">
-                        <div className="grid gap-4">
-                            <div>
-                                <p className="text-muted-foreground text-xs">
-                                    Objective
-                                </p>
-                                <p className="mt-1 text-sm whitespace-pre-wrap">
-                                    {task.objective}
-                                </p>
-                            </div>
-
-                            {task.implementation_spec && (
-                                <div>
-                                    <p className="text-muted-foreground text-xs">
-                                        Implementation specification
-                                    </p>
-                                    <p className="mt-1 text-sm whitespace-pre-wrap">
-                                        {task.implementation_spec}
-                                    </p>
-                                </div>
-                            )}
-
-                            <div>
-                                <p className="text-muted-foreground text-xs">
-                                    Parent WorkRequest
-                                </p>
-                                <p className="mt-1 text-sm whitespace-pre-wrap">
-                                    {request.prompt}
-                                </p>
-                                {request.summary && (
-                                    <p className="text-muted-foreground mt-2 text-sm whitespace-pre-wrap">
-                                        PM summary: {request.summary}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-                    </InspectionSection>
-
-                    <InspectionSection title="Workflow">
-                        <div className="grid gap-4">
-                            <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                <MetadataField label="Status">
-                                    <StatusBadge status={task.status} />
-                                </MetadataField>
-                                <MetadataField label="Outcome">
-                                    {task.outcome
-                                        ? humanize(task.outcome)
-                                        : 'Not recorded'}
-                                </MetadataField>
-                                <MetadataField label="Protocol recoveries">
-                                    {task.protocol_recovery_count}
-                                </MetadataField>
-                                <MetadataField label="Repair cycles">
-                                    {task.repair_cycle_count} of{' '}
-                                    {task.repair_cycle_limit}
-                                </MetadataField>
-                            </dl>
-
-                            {task.depends_on_task_id && (
-                                <div>
-                                    <p className="text-muted-foreground text-xs">
-                                        Dependency
-                                    </p>
-                                    <p className="mt-1 text-sm">
-                                        {dependency
-                                            ? `Task #${dependency.id}: ${dependency.title}`
-                                            : `Task #${task.depends_on_task_id}`}
-                                    </p>
-                                </div>
-                            )}
-
-                            {(task.outcome === 'blocked' ||
-                                task.blocked_reason) && (
-                                <div className="border-destructive/30 bg-destructive/5 rounded-lg border p-3">
-                                    <p className="text-destructive text-sm font-medium">
-                                        Blocking information
-                                    </p>
-                                    <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
-                                        {task.blocked_reason ||
-                                            'The Task has a blocked outcome without an additional recorded reason.'}
-                                    </p>
-                                </div>
-                            )}
-
-                            {task.last_handoff && (
-                                <div>
-                                    <p className="text-muted-foreground text-xs">
-                                        Latest handoff
-                                    </p>
-                                    <p className="mt-1 text-sm capitalize">
-                                        {task.last_handoff.to_role
-                                            ? `To ${humanize(task.last_handoff.to_role)}`
-                                            : 'Destination unavailable'}
-                                    </p>
-                                    {task.last_handoff.note && (
-                                        <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
-                                            {task.last_handoff.note}
-                                        </p>
-                                    )}
-                                </div>
-                            )}
-
-                            <TaskExecutionActions
-                                project={project}
-                                task={task}
-                            />
-                        </div>
-                    </InspectionSection>
-
-                    <InspectionSection title="Candidate and Repository">
-                        {hasCandidateMetadata ? (
-                            <div className="grid gap-4">
-                                <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                                    <MetadataField label="Branch" mono>
-                                        {task.branch_name ?? 'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField label="Candidate kind">
-                                        {task.candidate_kind
-                                            ? humanize(task.candidate_kind)
-                                            : 'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField
-                                        label="Candidate tree SHA"
-                                        mono
-                                    >
-                                        {task.candidate_tree_sha ??
-                                            'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField label="Commit SHA" mono>
-                                        {task.commit_sha ?? 'Unavailable'}
-                                    </MetadataField>
-                                    <MetadataField label="Worktree path" mono>
-                                        {task.worktree_path ?? 'Unavailable'}
-                                    </MetadataField>
-                                </dl>
-
-                                {task.changed_files.length > 0 && (
-                                    <div>
-                                        <p className="text-muted-foreground text-xs">
-                                            Changed files
-                                        </p>
-                                        <ul className="mt-2 grid gap-1 text-sm">
-                                            {task.changed_files.map((file) => (
-                                                <li
-                                                    key={`${task.id}-${file}`}
-                                                    className="bg-background/70 rounded-md px-2 py-1 font-mono text-xs break-all"
-                                                >
-                                                    {file}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
-
-                                {task.pull_request_url && (
-                                    <Button
-                                        asChild
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-fit"
-                                    >
-                                        <a
-                                            href={task.pull_request_url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                        >
-                                            View pull request
-                                            <ExternalLink aria-hidden="true" />
-                                        </a>
-                                    </Button>
-                                )}
-                            </div>
-                        ) : (
-                            <p className="text-muted-foreground text-sm">
-                                No candidate or task-worktree metadata has been
-                                recorded yet.
-                            </p>
-                        )}
-                    </InspectionSection>
-
-                    <InspectionSection title="QA Reviews">
-                        {task.candidate_reviews.length === 0 ? (
-                            <p className="text-muted-foreground text-sm">
-                                No QA review has been recorded for this Task
-                                yet.
-                            </p>
-                        ) : (
-                            <div className="grid gap-3">
-                                {task.candidate_reviews.map((review, index) => (
-                                    <article
-                                        key={`${task.id}-review-${index}`}
-                                        className="bg-background/70 rounded-lg p-3"
-                                    >
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <ReviewStatusBadge
-                                                status={review.status}
-                                            />
-                                            <span className="text-muted-foreground text-xs">
-                                                {formatTimestamp(
-                                                    review.created_at,
-                                                )}
-                                            </span>
-                                        </div>
-
-                                        {review.summary && (
-                                            <p className="mt-3 text-sm">
-                                                {review.summary}
-                                            </p>
-                                        )}
-
-                                        {review.candidate_tree_sha && (
-                                            <p className="text-muted-foreground mt-2 font-mono text-xs break-all">
-                                                Candidate tree:{' '}
-                                                {review.candidate_tree_sha}
-                                            </p>
-                                        )}
-
-                                        <pre className="bg-muted mt-3 max-h-72 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                                            {serializeFindings(review.findings)}
-                                        </pre>
-                                    </article>
-                                ))}
-                            </div>
-                        )}
-                    </InspectionSection>
-
-                    <InspectionSection title="Agent Activity">
-                        <AgentSessionActivity
-                            sessions={task.agent_sessions}
-                            emptyLabel="No Agent session has been recorded for this Task yet."
-                        />
-                    </InspectionSection>
-
-                    <InspectionSection title="Handoffs">
-                        {task.handoffs.length === 0 ? (
-                            <p className="text-muted-foreground text-sm">
-                                No durable Task handoff history has been
-                                recorded.
-                            </p>
-                        ) : (
-                            <ol className="grid gap-2">
-                                {task.handoffs.map((handoff) => (
-                                    <li
-                                        key={handoff.id}
-                                        className="bg-background/70 rounded-md p-3"
-                                    >
-                                        <div className="flex flex-wrap justify-between gap-2">
-                                            <span className="text-sm capitalize">
-                                                {humanize(
-                                                    handoff.from_role ??
-                                                        'unknown',
-                                                )}{' '}
-                                                →{' '}
-                                                {humanize(
-                                                    handoff.to_role ??
-                                                        'unknown',
-                                                )}
-                                            </span>
-                                            <span className="text-muted-foreground text-xs">
-                                                {formatTimestamp(
-                                                    handoff.dispatched_at,
-                                                )}
-                                            </span>
-                                        </div>
-                                        <p className="text-muted-foreground mt-1 text-sm">
-                                            {humanize(handoff.reason)}
-                                        </p>
-                                    </li>
-                                ))}
-                            </ol>
-                        )}
-                    </InspectionSection>
-                </div>
-            </DialogContent>
-        </Dialog>
-    );
-}
-
-/**
- * Render a concise scan-friendly Task card while keeping diagnostic data behind
- * the Inspect action.
+ * Render a concise Task card whose Inspect action opens the dedicated Task page.
  */
 function TaskCard({
     project,
@@ -1371,8 +456,8 @@ function TaskCard({
                             Blocked
                         </p>
                         <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                            {task.blocked_reason ||
-                                'The Task is recorded with a blocked outcome.'}
+                            {task.blocked_reason
+                                || 'The Task is recorded with a blocked outcome.'}
                         </p>
                     </div>
                 )}
@@ -1455,12 +540,11 @@ function TaskCard({
                     Work Request #{request.id}
                 </span>
 
-                <TaskInspectionDialog
-                    project={project}
-                    task={task}
-                    request={request}
-                    dependency={dependency}
-                />
+                <Button asChild variant="outline" size="sm">
+                    <Link href={showTask([project.id, task.id])}>
+                        Inspect
+                    </Link>
+                </Button>
             </CardFooter>
         </Card>
     );
@@ -1545,10 +629,23 @@ function TaskEmptyState({
             </div>
         );
     }
+
+    return (
+        <div className="border-border bg-card flex min-h-64 flex-col items-center justify-center rounded-xl border p-8 text-center">
+            <AlertCircle className="text-muted-foreground size-8" />
+            <h3 className="mt-4 text-base font-semibold">
+                No planned Tasks available
+            </h3>
+            <p className="text-muted-foreground mt-2 max-w-lg text-sm">
+                Existing WorkRequests have not produced a persisted Task that
+                can be displayed here.
+            </p>
+        </div>
+    );
 }
 
 /**
- * Render Tasks as the dominant responsive dashboard surface.
+ * Render Tasks as the dominant responsive Project dashboard surface.
  */
 function TasksSection({
     project,
@@ -1591,8 +688,8 @@ function TasksSection({
                         const dependency = item.task.depends_on_task_id
                             ? (taskItems.find(
                                   (candidate) =>
-                                      candidate.task.id ===
-                                      item.task.depends_on_task_id,
+                                      candidate.task.id
+                                      === item.task.depends_on_task_id,
                               )?.task ?? null)
                             : null;
 
@@ -1610,9 +707,9 @@ function TasksSection({
         </section>
     );
 }
+
 /**
- * Render the Project control surface with Tasks prioritized for scanning and
- * durable diagnostic information progressively disclosed on demand.
+ * Render the Project control surface with Tasks prioritized for scanning.
  */
 export default function ProjectWorkspace({
     project,

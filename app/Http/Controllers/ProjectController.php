@@ -4,16 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreProjectRequest;
 use App\Http\Requests\UpdateProjectRequest;
-use App\Models\AgentRun;
 use App\Models\AgentSession;
 use App\Models\Project;
-use App\Models\Task;
-use App\Models\TaskHandoff;
 use App\Models\WorkRequest;
 use App\Services\ProjectAgentProvisioner;
-use App\Services\RepairCycleGuard;
 use App\Services\RepositoryInspector;
-use App\Services\TaskWorktreeManager;
+use App\Services\TaskPayloadBuilder;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -60,8 +56,7 @@ class ProjectController extends Controller
         Project $project,
         RepositoryInspector $repositoryInspector,
         ProjectAgentProvisioner $provisioner,
-        TaskWorktreeManager $worktreeManager,
-        RepairCycleGuard $repairCycleGuard,
+        TaskPayloadBuilder $taskPayloadBuilder,
     ): Response {
         $provisioner->ensureFor($project);
 
@@ -80,8 +75,7 @@ class ProjectController extends Controller
             ->map(
                 fn (WorkRequest $workRequest): array => $this->workRequestPayload(
                     $workRequest,
-                    $worktreeManager,
-                    $repairCycleGuard,
+                    $taskPayloadBuilder,
                 ),
             )
             ->values();
@@ -138,8 +132,7 @@ class ProjectController extends Controller
      */
     private function workRequestPayload(
         WorkRequest $workRequest,
-        TaskWorktreeManager $worktreeManager,
-        RepairCycleGuard $repairCycleGuard,
+        TaskPayloadBuilder $taskPayloadBuilder,
     ): array {
         return [
             ...$workRequest->only([
@@ -158,7 +151,7 @@ class ProjectController extends Controller
             'agent_sessions' => $workRequest->agentSessions
                 ->sortByDesc('updated_at')
                 ->map(
-                    fn (AgentSession $session): array => $this->sessionPayload(
+                    fn (AgentSession $session): array => $taskPayloadBuilder->session(
                         $session,
                     ),
                 )
@@ -166,123 +159,10 @@ class ProjectController extends Controller
                 ->all(),
             'tasks' => $workRequest->tasks
                 ->map(
-                    fn (Task $task): array => $this->taskPayload($task, $worktreeManager, $repairCycleGuard),
+                    fn ($task): array => $taskPayloadBuilder->task($task),
                 )
                 ->values()
                 ->all(),
-        ];
-    }
-
-    /**
-     * Serialize one Task together with its most recent Agent handoff and recent Agent session activity.
-     *
-     * @return array<string, mixed>
-     */
-    private function taskPayload(Task $task, TaskWorktreeManager $worktreeManager, RepairCycleGuard $repairCycleGuard): array
-    {
-        return [
-            ...$task->only([
-                'id',
-                'depends_on_task_id',
-                'position',
-                'title',
-                'objective',
-                'implementation_spec',
-                'status',
-                'protocol_recovery_count',
-                'branch_name',
-                'worktree_path',
-                'blocked_reason',
-                'last_handoff',
-                'commit_sha',
-                'candidate_tree_sha',
-                'candidate_kind',
-                'outcome',
-                'pull_request_url',
-            ]),
-            'changed_files' => filled($task->worktree_path)
-                ? $worktreeManager->changedFiles($task)
-                : [],
-            'agent_sessions' => $task->agentSessions
-                ->sortByDesc('updated_at')
-                ->map(
-                    fn (AgentSession $session): array => $this->sessionPayload(
-                        $session,
-                    ),
-                )
-                ->values()
-                ->all(),
-            'candidate_reviews' => $task->candidateReviews
-                ->map(fn ($review): array => $review->only(['candidate_tree_sha', 'status', 'summary', 'findings', 'created_at']))
-                ->values()
-                ->all(),
-            'handoffs' => $task->handoffs
-                ->sortBy('id')
-                ->map(fn (TaskHandoff $handoff): array => [
-                    'id' => $handoff->id,
-                    'from_role' => $handoff->fromProjectAgent?->role,
-                    'to_role' => $handoff->toProjectAgent?->role,
-                    'reason' => $handoff->reason,
-                    'dispatched_at' => $handoff->dispatched_at?->toIso8601String(),
-                ])
-                ->values()
-                ->all(),
-            'repair_cycle_count' => $repairCycleGuard->repairCycleCount($task),
-            'repair_cycle_limit' => (int) config('aisf.max_repair_cycles'),
-        ];
-    }
-
-    /**
-     * Serialize one logical Agent session with at most ten recent invocation records.
-     *
-     * @return array<string, mixed>
-     */
-    private function sessionPayload(AgentSession $session): array
-    {
-        return [
-            'id' => $session->id,
-            'has_provider_continuity' => filled(
-                $session->provider_session_id,
-            ),
-            'agent' => [
-                'id' => $session->projectAgent->id,
-                'name' => $session->projectAgent->name,
-                'role' => $session->projectAgent->role,
-            ],
-            'runs' => $session->runs
-                ->sortByDesc('attempt')
-                ->take(10)
-                ->map(
-                    fn (AgentRun $run): array => $this->runPayload($run),
-                )
-                ->values()
-                ->all(),
-        ];
-    }
-
-    /**
-     * Serialize safe durable Agent invocation metadata and exact submitted context only.
-     *
-     * @return array<string, mixed>
-     */
-    private function runPayload(AgentRun $run): array
-    {
-        return [
-            'id' => $run->id,
-            'attempt' => $run->attempt,
-            'purpose' => $run->purpose,
-            'status' => $run->status,
-            'reconciliation_status' => $run->reconciliation_status,
-            'failure_class' => $run->failure_class,
-            'context_mode' => $run->context_mode,
-            'submitted_input' => $run->submitted_input,
-            'context_sources' => $run->context_sources ?? [],
-            'output_summary' => $run->output_summary,
-            'exit_code' => $run->exit_code,
-            'harness' => $run->execution_metadata['harness'] ?? null,
-            'model' => $run->execution_metadata['model'] ?? null,
-            'started_at' => $run->started_at->toIso8601String(),
-            'finished_at' => $run->finished_at?->toIso8601String(),
         ];
     }
 }
