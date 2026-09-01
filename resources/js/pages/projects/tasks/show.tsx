@@ -1,4 +1,4 @@
-import { Form, Head, Link } from '@inertiajs/react';
+import { Form, Head } from '@inertiajs/react';
 import {
     Activity,
     Bot,
@@ -8,8 +8,6 @@ import {
     Code2,
     Copy,
     ExternalLink,
-    GitBranch,
-    GitCommitHorizontal,
     Play,
     RotateCcw,
     ShieldCheck,
@@ -90,14 +88,18 @@ type TaskPageProps = {
     task: Task;
 };
 
+type RunWorkflowItem = {
+    kind: 'run';
+    key: string;
+    timestamp: string | null;
+    session: AgentSession;
+    run: AgentRun;
+    handoffs: HandoffRecord[];
+    reviews: CandidateReview[];
+};
+
 type WorkflowItem =
-    | {
-          kind: 'run';
-          key: string;
-          timestamp: string | null;
-          session: AgentSession;
-          run: AgentRun;
-      }
+    | RunWorkflowItem
     | {
           kind: 'handoff';
           key: string;
@@ -127,34 +129,234 @@ function timestampValue(value: string | null): number {
 }
 
 /**
- * Build one chronological presentation stream from durable runs, handoffs, and QA reviews.
+ * Return a nullable timestamp for proximity calculations without treating
+ * missing or invalid timestamps as meaningful workflow evidence.
+ */
+function sortableTimestamp(value: string | null): number | null {
+    const timestamp = timestampValue(value);
+
+    return timestamp === Number.MAX_SAFE_INTEGER
+        ? null
+        : timestamp;
+}
+
+/**
+ * Normalize persisted Agent role names before comparing workflow evidence.
+ */
+function normalizeRole(value: string | null): string {
+    return (value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_');
+}
+
+/**
+ * Determine whether a persisted Agent role represents QA activity.
+ */
+function isQaRole(role: string): boolean {
+    const normalizedRole = normalizeRole(role);
+
+    return normalizedRole === 'qa'
+        || normalizedRole.includes('qa_')
+        || normalizedRole.includes('_qa')
+        || normalizedRole.includes('quality_assurance');
+}
+
+/**
+ * Return the most useful completion-side timestamp for associating evidence
+ * created immediately after an Agent invocation.
+ */
+function runEvidenceTimestamp(run: AgentRun): number | null {
+    return sortableTimestamp(run.finished_at ?? run.started_at);
+}
+
+/**
+ * Find the most meaningful originating Agent Run for one durable handoff.
+ */
+function findHandoffRunIndex(
+    runs: RunWorkflowItem[],
+    handoff: HandoffRecord,
+): number | null {
+    const fromRole = normalizeRole(handoff.from_role);
+
+    if (!fromRole) {
+        return null;
+    }
+
+    const candidates = runs
+        .map((item, index) => ({
+            item,
+            index,
+            timestamp: runEvidenceTimestamp(item.run),
+        }))
+        .filter(
+            ({ item }) =>
+                normalizeRole(item.session.agent.role) === fromRole,
+        );
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    const handoffTimestamp = sortableTimestamp(handoff.dispatched_at);
+
+    if (handoffTimestamp !== null) {
+        const priorCandidates = candidates
+            .filter(
+                ({ timestamp }) =>
+                    timestamp !== null
+                    && timestamp <= handoffTimestamp,
+            )
+            .sort(
+                (left, right) =>
+                    (right.timestamp ?? 0)
+                    - (left.timestamp ?? 0),
+            );
+
+        if (priorCandidates.length > 0) {
+            return priorCandidates[0].index;
+        }
+
+        const closestCandidates = candidates
+            .filter(({ timestamp }) => timestamp !== null)
+            .sort(
+                (left, right) =>
+                    Math.abs(
+                        (left.timestamp ?? 0) - handoffTimestamp,
+                    )
+                    - Math.abs(
+                        (right.timestamp ?? 0) - handoffTimestamp,
+                    ),
+            );
+
+        if (closestCandidates.length > 0) {
+            return closestCandidates[0].index;
+        }
+    }
+
+    return [...candidates].sort(
+        (left, right) =>
+            right.item.run.id - left.item.run.id,
+    )[0]?.index ?? null;
+}
+
+/**
+ * Find the QA Agent Run that most meaningfully corresponds to a durable
+ * CandidateReview without inventing a persisted relationship.
+ */
+function findReviewRunIndex(
+    runs: RunWorkflowItem[],
+    review: CandidateReview,
+): number | null {
+    const candidates = runs
+        .map((item, index) => ({
+            item,
+            index,
+            timestamp: runEvidenceTimestamp(item.run),
+        }))
+        .filter(({ item }) => isQaRole(item.session.agent.role));
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    const reviewTimestamp = sortableTimestamp(review.created_at);
+
+    if (reviewTimestamp !== null) {
+        const priorCandidates = candidates
+            .filter(
+                ({ timestamp }) =>
+                    timestamp !== null
+                    && timestamp <= reviewTimestamp,
+            )
+            .sort(
+                (left, right) =>
+                    (right.timestamp ?? 0)
+                    - (left.timestamp ?? 0),
+            );
+
+        if (priorCandidates.length > 0) {
+            return priorCandidates[0].index;
+        }
+
+        const closestCandidates = candidates
+            .filter(({ timestamp }) => timestamp !== null)
+            .sort(
+                (left, right) =>
+                    Math.abs(
+                        (left.timestamp ?? 0) - reviewTimestamp,
+                    )
+                    - Math.abs(
+                        (right.timestamp ?? 0) - reviewTimestamp,
+                    ),
+            );
+
+        if (closestCandidates.length > 0) {
+            return closestCandidates[0].index;
+        }
+    }
+
+    return [...candidates].sort(
+        (left, right) =>
+            right.item.run.id - left.item.run.id,
+    )[0]?.index ?? null;
+}
+
+/**
+ * Build the workflow presentation around Agent Runs, enriching those turns
+ * with associated handoffs and CandidateReviews while preserving standalone
+ * durable evidence when no meaningful Agent Run association exists.
  */
 function buildWorkflowItems(task: Task): WorkflowItem[] {
-    const runs: WorkflowItem[] = task.agent_sessions.flatMap((session) =>
-        session.runs.map((run) => ({
-            kind: 'run' as const,
-            key: `run-${run.id}`,
-            timestamp: run.started_at ?? run.finished_at,
-            session,
-            run,
-        })),
+    const runs: RunWorkflowItem[] = task.agent_sessions.flatMap(
+        (session) =>
+            session.runs.map((run) => ({
+                kind: 'run' as const,
+                key: `run-${run.id}`,
+                timestamp: run.started_at ?? run.finished_at,
+                session,
+                run,
+                handoffs: [],
+                reviews: [],
+            })),
     );
 
-    const handoffs: WorkflowItem[] = task.handoffs.map((handoff) => ({
-        kind: 'handoff' as const,
-        key: `handoff-${handoff.id}`,
-        timestamp: handoff.dispatched_at,
-        handoff,
-    }));
+    const standaloneHandoffs: WorkflowItem[] = [];
+    const standaloneReviews: WorkflowItem[] = [];
 
-    const reviews: WorkflowItem[] = task.candidate_reviews.map(
-        (review, index) => ({
-            kind: 'review' as const,
-            key: `review-${review.candidate_tree_sha ?? 'none'}-${review.created_at ?? index}`,
-            timestamp: review.created_at,
-            review,
-        }),
-    );
+    task.handoffs.forEach((handoff) => {
+        const runIndex = findHandoffRunIndex(runs, handoff);
+
+        if (runIndex === null) {
+            standaloneHandoffs.push({
+                kind: 'handoff',
+                key: `handoff-${handoff.id}`,
+                timestamp: handoff.dispatched_at,
+                handoff,
+            });
+
+            return;
+        }
+
+        runs[runIndex].handoffs.push(handoff);
+    });
+
+    task.candidate_reviews.forEach((review, index) => {
+        const runIndex = findReviewRunIndex(runs, review);
+
+        if (runIndex === null) {
+            standaloneReviews.push({
+                kind: 'review',
+                key: `review-${review.candidate_tree_sha ?? 'none'}-${review.created_at ?? index}-${index}`,
+                timestamp: review.created_at,
+                review,
+            });
+
+            return;
+        }
+
+        runs[runIndex].reviews.push(review);
+    });
 
     const typeRank: Record<WorkflowItem['kind'], number> = {
         run: 0,
@@ -162,9 +364,14 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
         handoff: 2,
     };
 
-    return [...runs, ...reviews, ...handoffs].sort((left, right) => {
+    return [
+        ...runs,
+        ...standaloneReviews,
+        ...standaloneHandoffs,
+    ].sort((left, right) => {
         const timestampDifference =
-            timestampValue(left.timestamp) - timestampValue(right.timestamp);
+            timestampValue(left.timestamp)
+            - timestampValue(right.timestamp);
 
         if (timestampDifference !== 0) {
             return timestampDifference;
@@ -182,10 +389,11 @@ function buildWorkflowItems(task: Task): WorkflowItem[] {
 }
 
 /**
- * Render an icon representing the durable Agent role without relying on color.
+ * Render an icon representing the durable Agent role without relying on
+ * screenshot-only identities or fabricated avatar assets.
  */
 function AgentRoleIcon({ role }: { role: string }) {
-    const normalizedRole = role.toLowerCase();
+    const normalizedRole = normalizeRole(role);
 
     if (normalizedRole.includes('project_manager')) {
         return <ClipboardList className="size-4" aria-hidden="true" />;
@@ -195,7 +403,7 @@ function AgentRoleIcon({ role }: { role: string }) {
         return <Code2 className="size-4" aria-hidden="true" />;
     }
 
-    if (normalizedRole.includes('qa')) {
+    if (isQaRole(normalizedRole)) {
         return <ShieldCheck className="size-4" aria-hidden="true" />;
     }
 
@@ -203,7 +411,8 @@ function AgentRoleIcon({ role }: { role: string }) {
 }
 
 /**
- * Render a compact label/value pair for Task inspection metadata.
+ * Render a compact aligned label/value pair for the narrow Task inspector and
+ * expanded Agent evidence metadata.
  */
 function MetadataField({
     label,
@@ -215,13 +424,15 @@ function MetadataField({
     mono?: boolean;
 }) {
     return (
-        <div className="grid min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] gap-3 text-sm">
-            <dt className="text-muted-foreground">{label}</dt>
+        <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-3 text-sm">
+            <dt className="text-muted-foreground leading-5">
+                {label}
+            </dt>
             <dd
                 className={
                     mono
-                        ? 'min-w-0 break-all font-mono'
-                        : 'min-w-0 break-words'
+                        ? 'min-w-0 break-all font-mono text-xs leading-5'
+                        : 'min-w-0 break-words leading-5'
                 }
             >
                 {children}
@@ -231,7 +442,8 @@ function MetadataField({
 }
 
 /**
- * Render one visually restrained Task Details section separated from adjacent groups.
+ * Render one internally separated Task Details section without introducing
+ * nested card surfaces.
  */
 function DetailsSection({
     title,
@@ -241,7 +453,7 @@ function DetailsSection({
     children: React.ReactNode;
 }) {
     return (
-        <section className="grid gap-3">
+        <section className="grid gap-3 px-4 py-4">
             <h3 className="text-sm font-semibold">{title}</h3>
             {children}
         </section>
@@ -249,7 +461,8 @@ function DetailsSection({
 }
 
 /**
- * Copy a full persisted identifier with accessible visual success feedback.
+ * Copy a complete persisted identifier while displaying accessible success
+ * feedback and leaving the visible value compact.
  */
 function CopyValueButton({
     value,
@@ -287,69 +500,273 @@ function CopyValueButton({
 }
 
 /**
- * Render one Agent invocation as an accessible progressive-disclosure timeline row.
+ * Render a shortened Git identifier with a copy control that preserves access
+ * to the complete persisted SHA.
+ */
+function CopyableSha({
+    value,
+    label,
+}: {
+    value: string | null;
+    label: string;
+}) {
+    if (!value) {
+        return (
+            <span className="text-muted-foreground">
+                Not recorded
+            </span>
+        );
+    }
+
+    return (
+        <div className="flex min-w-0 items-center gap-1">
+            <span
+                className="min-w-0 font-mono text-xs break-all"
+                title={value}
+            >
+                {shortSha(value)}
+            </span>
+            <CopyValueButton value={value} label={label} />
+        </div>
+    );
+}
+
+/**
+ * Format a durable role-to-role handoff using only recorded role values.
+ */
+function formatRoleRoute(
+    fromRole: string | null,
+    toRole: string | null,
+): string {
+    return `${humanize(fromRole ?? 'unknown')} → ${humanize(toRole ?? 'unknown')}`;
+}
+
+/**
+ * Render durable handoff evidence inside the Agent turn that most meaningfully
+ * originated it.
+ */
+function HandoffEvidence({
+    handoffs,
+}: {
+    handoffs: HandoffRecord[];
+}) {
+    if (handoffs.length === 0) {
+        return null;
+    }
+
+    return (
+        <details className="border-border rounded-md border">
+            <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
+                Handoff evidence
+            </summary>
+            <div className="border-border grid gap-3 border-t p-3">
+                {handoffs.map((handoff) => (
+                    <div
+                        key={handoff.id}
+                        className="grid gap-1 text-sm"
+                    >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                            <span className="font-medium capitalize">
+                                {formatRoleRoute(
+                                    handoff.from_role,
+                                    handoff.to_role,
+                                )}
+                            </span>
+                            <span className="text-muted-foreground shrink-0 text-xs">
+                                {formatTimestamp(handoff.dispatched_at)}
+                            </span>
+                        </div>
+                        <span className="text-muted-foreground capitalize">
+                            {humanize(handoff.reason)}
+                        </span>
+                    </div>
+                ))}
+            </div>
+        </details>
+    );
+}
+
+/**
+ * Render durable CandidateReview evidence inside its associated QA Agent turn
+ * so review findings do not duplicate the primary workflow chronology.
+ */
+function QaReviewEvidence({
+    reviews,
+}: {
+    reviews: CandidateReview[];
+}) {
+    if (reviews.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="grid gap-3">
+            {reviews.map((review, index) => (
+                <div
+                    key={`${review.candidate_tree_sha ?? 'none'}-${review.created_at ?? index}-${index}`}
+                    className="border-border bg-muted/20 grid gap-3 rounded-md border p-3"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">
+                                QA review
+                            </span>
+                            <ReviewStatusBadge status={review.status} />
+                        </div>
+                        <span className="text-muted-foreground text-xs">
+                            {formatTimestamp(review.created_at)}
+                        </span>
+                    </div>
+
+                    <dl className="grid gap-2">
+                        <MetadataField label="Candidate">
+                            <CopyableSha
+                                value={review.candidate_tree_sha}
+                                label="reviewed candidate SHA"
+                            />
+                        </MetadataField>
+                    </dl>
+
+                    {review.summary && (
+                        <p className="text-sm leading-6 whitespace-pre-wrap break-words">
+                            {review.summary}
+                        </p>
+                    )}
+
+                    <details className="border-border bg-background rounded-md border">
+                        <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
+                            Inspect QA findings
+                        </summary>
+                        <pre className="bg-muted/50 border-border max-h-72 overflow-y-auto border-t p-3 text-xs leading-5 whitespace-pre-wrap break-all">
+                            {serializeFindings(review.findings)}
+                        </pre>
+                    </details>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * Render one Agent invocation as the dominant accessible workflow timeline row.
  */
 function AgentRunTimelineRow({
     session,
     run,
     handoffs,
+    reviews,
 }: {
     session: AgentSession;
     run: AgentRun;
     handoffs: HandoffRecord[];
+    reviews: CandidateReview[];
 }) {
-    const roleHandoffs = handoffs.filter(
-        (handoff) => handoff.from_role === session.agent.role,
+    const latestHandoff =
+        handoffs[handoffs.length - 1] ?? null;
+    const latestReview =
+        reviews[reviews.length - 1] ?? null;
+    const hasReviewNeedingAttention = reviews.some(
+        (review) => review.status !== 'approved',
     );
 
     const defaultOpen =
         run.status === 'failed'
         || run.reconciliation_status === 'recoverable'
         || run.reconciliation_status === 'terminal'
-        || run.failure_class !== null;
+        || run.failure_class !== null
+        || hasReviewNeedingAttention;
 
     return (
         <Collapsible defaultOpen={defaultOpen}>
-            <div className="border-border bg-card overflow-hidden rounded-lg border">
+            <div className="border-border bg-card overflow-hidden rounded-lg border shadow-none">
                 <CollapsibleTrigger asChild>
                     <button
                         type="button"
-                        className="group focus-visible:ring-ring flex w-full min-w-0 items-start gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                        className="group focus-visible:ring-ring flex w-full min-w-0 items-start gap-3 px-4 py-3.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset"
                     >
-                        <div className="bg-muted mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full">
+                        <div className="border-border bg-muted/60 mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border">
                             <AgentRoleIcon role={session.agent.role} />
                         </div>
 
-                        <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">
-                                    {session.agent.name}
-                                </span>
-                                <span className="text-muted-foreground text-xs capitalize">
+                        <div className="min-w-0 flex-1 xl:grid xl:grid-cols-[8.75rem_minmax(0,1fr)] xl:gap-4">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="truncate text-sm font-semibold">
+                                        {session.agent.name}
+                                    </span>
+                                    <Badge
+                                        variant="outline"
+                                        className="h-5 px-1.5 text-[11px]"
+                                    >
+                                        Run #{run.attempt}
+                                    </Badge>
+                                </div>
+                                <p className="text-muted-foreground mt-0.5 text-xs capitalize">
                                     {humanize(session.agent.role)}
-                                </span>
-                                <Badge variant="outline">
-                                    Run #{run.attempt}
-                                </Badge>
+                                </p>
                             </div>
 
-                            <p className="mt-1 text-sm font-medium">
-                                {humanize(run.purpose)}
-                            </p>
-
-                            {run.output_summary && (
-                                <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
-                                    {run.output_summary}
+                            <div className="mt-2 min-w-0 xl:mt-0">
+                                <p className="text-sm font-medium leading-5 capitalize">
+                                    {humanize(run.purpose)}
                                 </p>
-                            )}
+
+                                {run.output_summary && (
+                                    <p className="text-muted-foreground mt-1 line-clamp-2 text-sm leading-5">
+                                        {run.output_summary}
+                                    </p>
+                                )}
+
+                                {latestReview && (
+                                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+                                        <ReviewStatusBadge
+                                            status={latestReview.status}
+                                        />
+                                        {latestReview.candidate_tree_sha && (
+                                            <span className="text-muted-foreground font-mono text-xs">
+                                                {shortSha(
+                                                    latestReview.candidate_tree_sha,
+                                                )}
+                                            </span>
+                                        )}
+                                        {latestReview.summary && (
+                                            <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+                                                {latestReview.summary}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+
+                                {latestHandoff && (
+                                    <p className="text-muted-foreground mt-2 line-clamp-1 text-xs">
+                                        <span className="font-medium">
+                                            Handoff:
+                                        </span>{' '}
+                                        <span className="capitalize">
+                                            {formatRoleRoute(
+                                                latestHandoff.from_role,
+                                                latestHandoff.to_role,
+                                            )}
+                                        </span>
+                                        {' · '}
+                                        <span className="capitalize">
+                                            {humanize(latestHandoff.reason)}
+                                        </span>
+                                        {handoffs.length > 1
+                                            ? ` · +${handoffs.length - 1} more`
+                                            : ''}
+                                    </p>
+                                )}
+                            </div>
                         </div>
 
                         <div className="flex shrink-0 flex-col items-end gap-2">
-                            <span className="text-muted-foreground text-xs">
+                            <span className="text-muted-foreground hidden max-w-28 text-right text-xs sm:block">
                                 {formatTimestamp(
                                     run.finished_at ?? run.started_at,
                                 )}
                             </span>
+
                             <div className="flex items-center gap-2">
                                 <RunStatusBadge status={run.status} />
                                 <ChevronDown
@@ -363,18 +780,18 @@ function AgentRunTimelineRow({
 
                 <CollapsibleContent>
                     <div className="border-border grid gap-4 border-t px-4 py-4">
-                        <div className="grid gap-2">
+                        <div className="grid gap-1.5">
                             <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
                                 Output summary
                             </p>
-                            <p className="text-sm whitespace-pre-wrap">
+                            <p className="text-sm leading-6 whitespace-pre-wrap break-words">
                                 {run.output_summary
                                     ?? 'No output summary was recorded.'}
                             </p>
                         </div>
 
-                        <dl className="grid gap-3 md:grid-cols-2">
-                            <MetadataField label="Context mode">
+                        <dl className="grid gap-x-6 gap-y-3 xl:grid-cols-2">
+                            <MetadataField label="Submitted mode">
                                 <span className="capitalize">
                                     {humanize(run.context_mode)}
                                 </span>
@@ -384,6 +801,18 @@ function AgentRunTimelineRow({
                                 {session.has_provider_continuity
                                     ? 'Provider resume available'
                                     : 'Logical continuity only'}
+                            </MetadataField>
+
+                            <MetadataField label="Context sources">
+                                {run.context_sources.length}
+                            </MetadataField>
+
+                            <MetadataField label="Harness">
+                                {run.harness ?? 'Not recorded'}
+                            </MetadataField>
+
+                            <MetadataField label="Model">
+                                {run.model ?? 'Not recorded'}
                             </MetadataField>
 
                             <MetadataField label="Started">
@@ -400,76 +829,41 @@ function AgentRunTimelineRow({
                                 {run.exit_code ?? 'Not recorded'}
                             </MetadataField>
 
-                            <MetadataField label="Harness">
-                                {run.harness ?? 'Not recorded'}
-                            </MetadataField>
-
-                            <MetadataField label="Model">
-                                {run.model ?? 'Not recorded'}
-                            </MetadataField>
-
                             <MetadataField label="Reconciliation">
-                                {run.reconciliation_status
-                                    ? humanize(run.reconciliation_status)
-                                    : 'Not recorded'}
+                                <span className="capitalize">
+                                    {run.reconciliation_status
+                                        ? humanize(
+                                              run.reconciliation_status,
+                                          )
+                                        : 'Not recorded'}
+                                </span>
                             </MetadataField>
 
                             <MetadataField label="Failure class">
-                                {run.failure_class
-                                    ? humanize(run.failure_class)
-                                    : 'None recorded'}
+                                <span className="capitalize">
+                                    {run.failure_class
+                                        ? humanize(run.failure_class)
+                                        : 'None recorded'}
+                                </span>
                             </MetadataField>
                         </dl>
 
-                        {(run.reconciliation_status || run.failure_class) && (
-                            <div className="flex flex-wrap gap-2">
-                                {run.reconciliation_status && (
-                                    <Badge
-                                        variant={
-                                            run.reconciliation_status
-                                            === 'terminal'
-                                                ? 'destructive'
-                                                : 'outline'
-                                        }
-                                    >
-                                        Reconciliation:{' '}
-                                        {humanize(run.reconciliation_status)}
-                                    </Badge>
-                                )}
-
-                                {run.failure_class && (
-                                    <Badge
-                                        variant={
-                                            run.failure_class
-                                            === 'terminal_blocked'
-                                                ? 'destructive'
-                                                : 'outline'
-                                        }
-                                    >
-                                        {humanize(run.failure_class)}
-                                    </Badge>
-                                )}
-                            </div>
-                        )}
-
-                        <div>
-                            <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                                Context sources
-                            </p>
-
-                            {run.context_sources.length === 0 ? (
-                                <p className="text-muted-foreground mt-2 text-sm">
-                                    No context sources were recorded.
-                                </p>
-                            ) : (
-                                <div className="mt-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                        {run.context_sources.length > 0 && (
+                            <details className="border-border rounded-md border">
+                                <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
+                                    Inspect context sources
+                                </summary>
+                                <div className="border-border flex max-h-40 flex-wrap gap-2 overflow-y-auto border-t p-3">
                                     {run.context_sources.map(
                                         (source, index) => (
                                             <Badge
                                                 key={`${run.id}-source-${index}`}
                                                 variant="outline"
+                                                className="max-w-full whitespace-normal"
                                             >
-                                                {source.label}
+                                                <span className="break-words">
+                                                    {source.label}
+                                                </span>
                                                 <span className="text-muted-foreground">
                                                     · {humanize(source.type)}
                                                 </span>
@@ -477,53 +871,19 @@ function AgentRunTimelineRow({
                                         ),
                                     )}
                                 </div>
-                            )}
-                        </div>
-
-                        {roleHandoffs.length > 0 && (
-                            <details className="border-border rounded-md border">
-                                <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                                    Handoff evidence from this role
-                                </summary>
-                                <div className="border-border grid gap-2 border-t p-3">
-                                    {roleHandoffs.map((handoff) => (
-                                        <div
-                                            key={`${run.id}-role-handoff-${handoff.id}`}
-                                            className="text-sm"
-                                        >
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <span className="capitalize">
-                                                    {humanize(
-                                                        handoff.from_role
-                                                            ?? 'unknown',
-                                                    )}{' '}
-                                                    →{' '}
-                                                    {humanize(
-                                                        handoff.to_role
-                                                            ?? 'unknown',
-                                                    )}
-                                                </span>
-                                                <span className="text-muted-foreground text-xs">
-                                                    {formatTimestamp(
-                                                        handoff.dispatched_at,
-                                                    )}
-                                                </span>
-                                            </div>
-                                            <p className="text-muted-foreground mt-1 capitalize">
-                                                {humanize(handoff.reason)}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
                             </details>
                         )}
 
+                        <HandoffEvidence handoffs={handoffs} />
+
+                        <QaReviewEvidence reviews={reviews} />
+
                         <details className="border-border rounded-md border">
-                            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                            <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
                                 Inspect submitted input
                             </summary>
                             <div className="border-border border-t p-3">
-                                <pre className="bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
+                                <pre className="bg-muted max-h-96 overflow-y-auto rounded-md p-3 text-xs leading-5 whitespace-pre-wrap break-all">
                                     {run.submitted_input}
                                 </pre>
                             </div>
@@ -536,19 +896,20 @@ function AgentRunTimelineRow({
 }
 
 /**
- * Render one durable role handoff as a chronological workflow event.
+ * Render a lower-weight standalone durable handoff only when no originating
+ * Agent Run can be meaningfully associated with it.
  */
-function HandoffTimelineRow({
+function StandaloneHandoffTimelineRow({
     handoff,
 }: {
     handoff: HandoffRecord;
 }) {
     return (
-        <div className="border-border bg-card rounded-lg border px-4 py-3">
+        <div className="border-border bg-muted/20 rounded-md border px-4 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                     <Activity
-                        className="text-muted-foreground size-4"
+                        className="text-muted-foreground size-4 shrink-0"
                         aria-hidden="true"
                     />
                     <span className="text-sm font-medium">
@@ -560,11 +921,13 @@ function HandoffTimelineRow({
                 </span>
             </div>
 
-            <p className="mt-2 text-sm capitalize">
-                {humanize(handoff.from_role ?? 'unknown')} →{' '}
-                {humanize(handoff.to_role ?? 'unknown')}
+            <p className="mt-1.5 text-sm capitalize">
+                {formatRoleRoute(
+                    handoff.from_role,
+                    handoff.to_role,
+                )}
             </p>
-            <p className="text-muted-foreground mt-1 text-sm capitalize">
+            <p className="text-muted-foreground mt-0.5 text-xs capitalize">
                 {humanize(handoff.reason)}
             </p>
         </div>
@@ -572,19 +935,20 @@ function HandoffTimelineRow({
 }
 
 /**
- * Render one durable QA CandidateReview as a chronological workflow event.
+ * Render a lower-weight standalone CandidateReview only when no QA Agent Run
+ * can be meaningfully associated with the review evidence.
  */
-function ReviewTimelineRow({
+function StandaloneReviewTimelineRow({
     review,
 }: {
     review: CandidateReview;
 }) {
     return (
-        <div className="border-border bg-card rounded-lg border px-4 py-3">
+        <div className="border-border bg-muted/20 rounded-md border px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <ShieldCheck
-                        className="text-muted-foreground size-4"
+                        className="text-muted-foreground size-4 shrink-0"
                         aria-hidden="true"
                     />
                     <span className="text-sm font-medium">
@@ -599,20 +963,28 @@ function ReviewTimelineRow({
             </div>
 
             {review.summary && (
-                <p className="mt-2 text-sm">{review.summary}</p>
-            )}
-
-            {review.candidate_tree_sha && (
-                <p className="text-muted-foreground mt-2 font-mono text-xs break-all">
-                    Candidate {review.candidate_tree_sha}
+                <p className="mt-2 text-sm leading-5 whitespace-pre-wrap break-words">
+                    {review.summary}
                 </p>
             )}
 
+            {review.candidate_tree_sha && (
+                <div className="mt-2 flex items-center gap-1">
+                    <span className="text-muted-foreground text-xs">
+                        Candidate
+                    </span>
+                    <CopyableSha
+                        value={review.candidate_tree_sha}
+                        label="reviewed candidate SHA"
+                    />
+                </div>
+            )}
+
             <details className="border-border mt-3 rounded-md border">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
                     Inspect QA findings
                 </summary>
-                <pre className="bg-muted border-border max-h-72 overflow-auto border-t p-3 text-xs whitespace-pre-wrap">
+                <pre className="bg-muted/50 border-border max-h-72 overflow-y-auto border-t p-3 text-xs leading-5 whitespace-pre-wrap break-all">
                     {serializeFindings(review.findings)}
                 </pre>
             </details>
@@ -621,7 +993,8 @@ function ReviewTimelineRow({
 }
 
 /**
- * Render complete Task workflow evidence as one deterministic chronological timeline.
+ * Render complete durable workflow evidence while making Agent turns the
+ * dominant chronology and infrastructure evidence visually secondary.
  */
 function WorkflowTimeline({ task }: { task: Task }) {
     const items = buildWorkflowItems(task);
@@ -645,11 +1018,11 @@ function WorkflowTimeline({ task }: { task: Task }) {
     }
 
     return (
-        <div className="relative grid gap-3 pl-7 before:absolute before:top-3 before:bottom-3 before:left-2.5 before:w-px before:bg-border">
+        <div className="relative grid gap-3 pl-6 before:absolute before:top-5 before:bottom-5 before:left-2 before:w-px before:bg-border">
             {items.map((item) => (
                 <div key={item.key} className="relative min-w-0">
                     <span
-                        className="border-border bg-background absolute top-5 -left-[1.375rem] size-3 rounded-full border-2"
+                        className="border-background bg-card ring-border absolute top-6 -left-[1.125rem] size-2.5 rounded-full border-2 ring-1"
                         aria-hidden="true"
                     />
 
@@ -657,16 +1030,21 @@ function WorkflowTimeline({ task }: { task: Task }) {
                         <AgentRunTimelineRow
                             session={item.session}
                             run={item.run}
-                            handoffs={task.handoffs}
+                            handoffs={item.handoffs}
+                            reviews={item.reviews}
                         />
                     )}
 
                     {item.kind === 'handoff' && (
-                        <HandoffTimelineRow handoff={item.handoff} />
+                        <StandaloneHandoffTimelineRow
+                            handoff={item.handoff}
+                        />
                     )}
 
                     {item.kind === 'review' && (
-                        <ReviewTimelineRow review={item.review} />
+                        <StandaloneReviewTimelineRow
+                            review={item.review}
+                        />
                     )}
                 </div>
             ))}
@@ -675,9 +1053,22 @@ function WorkflowTimeline({ task }: { task: Task }) {
 }
 
 /**
- * Render only workflow actions that the existing TaskController can validly execute.
+ * Determine whether a waiting Task has durable operator-facing handoff
+ * instructions that should expose the Continue workflow.
  */
-function TaskActions({
+function hasWaitingInstruction(task: Task): boolean {
+    return (
+        task.status === 'waiting'
+        && Boolean(task.last_handoff?.id)
+        && Boolean(task.last_handoff?.note)
+    );
+}
+
+/**
+ * Render only the compact Task actions already supported by persisted state
+ * and existing TaskController contracts.
+ */
+function TaskActionButtons({
     project,
     task,
 }: {
@@ -685,10 +1076,8 @@ function TaskActions({
     task: Task;
 }) {
     const hasDispatchableHandoff = Boolean(task.last_handoff?.id);
-    const waitingWithInstruction =
-        task.status === 'waiting'
-        && hasDispatchableHandoff
-        && Boolean(task.last_handoff?.note);
+    const waitingWithInstruction = hasWaitingInstruction(task);
+
     const canRun =
         hasDispatchableHandoff
         && (
@@ -700,11 +1089,15 @@ function TaskActions({
         );
 
     return (
-        <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             {canRun && (
                 <Form {...runTask.form([project.id, task.id])}>
                     {({ processing }) => (
-                        <Button type="submit" disabled={processing}>
+                        <Button
+                            type="submit"
+                            variant="outline"
+                            disabled={processing}
+                        >
                             {processing ? (
                                 <Spinner />
                             ) : (
@@ -747,59 +1140,82 @@ function TaskActions({
                     </a>
                 </Button>
             )}
-
-            {waitingWithInstruction && (
-                <Form
-                    {...runTask.form([project.id, task.id])}
-                    className="border-border bg-muted/30 w-full rounded-lg border p-3 sm:max-w-xl"
-                >
-                    {({ processing, errors }) => (
-                        <div className="grid gap-2">
-                            <div>
-                                <p className="text-sm font-medium">
-                                    Waiting for next Agent turn
-                                </p>
-                                <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
-                                    {task.last_handoff?.note}
-                                </p>
-                            </div>
-
-                            <Label
-                                htmlFor={`task-${task.id}-operator-instruction`}
-                                className="text-xs"
-                            >
-                                Optional operator instruction
-                            </Label>
-
-                            <textarea
-                                id={`task-${task.id}-operator-instruction`}
-                                name="operator_instruction"
-                                placeholder="Instruction for the next Agent turn…"
-                                className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-20 resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2"
-                            />
-
-                            <InputError
-                                message={errors.operator_instruction}
-                            />
-
-                            <Button
-                                type="submit"
-                                className="w-fit"
-                                disabled={processing}
-                            >
-                                {processing && <Spinner />}
-                                Continue
-                            </Button>
-                        </div>
-                    )}
-                </Form>
-            )}
         </div>
     );
 }
 
 /**
- * Render the compact Task identity, objective, status, and valid workflow controls.
+ * Render the existing optional operator instruction and Continue contract
+ * without allowing the form to distort the primary Task header controls.
+ */
+function WaitingContinuationPanel({
+    project,
+    task,
+}: {
+    project: ProjectSummary;
+    task: Task;
+}) {
+    if (!hasWaitingInstruction(task)) {
+        return null;
+    }
+
+    return (
+        <>
+            <Separator />
+            <div className="p-4">
+                <Form
+                    {...runTask.form([project.id, task.id])}
+                    className="grid gap-3"
+                >
+                    {({ processing, errors }) => (
+                        <>
+                            <div className="grid gap-1">
+                                <p className="text-sm font-medium">
+                                    Waiting for next Agent turn
+                                </p>
+                                <p className="text-muted-foreground text-sm leading-5 whitespace-pre-wrap break-words">
+                                    {task.last_handoff?.note}
+                                </p>
+                            </div>
+
+                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                                <div className="grid min-w-0 gap-2">
+                                    <Label
+                                        htmlFor={`task-${task.id}-operator-instruction`}
+                                        className="text-xs"
+                                    >
+                                        Optional operator instruction
+                                    </Label>
+                                    <textarea
+                                        id={`task-${task.id}-operator-instruction`}
+                                        name="operator_instruction"
+                                        placeholder="Instruction for the next Agent turn..."
+                                        className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-20 min-w-0 resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2"
+                                    />
+                                    <InputError
+                                        message={errors.operator_instruction}
+                                    />
+                                </div>
+
+                                <Button
+                                    type="submit"
+                                    disabled={processing}
+                                >
+                                    {processing && <Spinner />}
+                                    Continue
+                                </Button>
+                            </div>
+                        </>
+                    )}
+                </Form>
+            </div>
+        </>
+    );
+}
+
+/**
+ * Render the dominant Task identity, objective, state, and supported actions
+ * across the full workspace width.
  */
 function TaskHeader({
     project,
@@ -809,8 +1225,8 @@ function TaskHeader({
     task: Task;
 }) {
     return (
-        <Card className="gap-0 py-0">
-            <CardHeader className="gap-4 p-5 md:p-6">
+        <Card className="gap-0 py-0 shadow-none">
+            <CardHeader className="p-5">
                 <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
                     <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -831,20 +1247,17 @@ function TaskHeader({
                         </p>
                     </div>
 
-                    <TaskActions project={project} task={task} />
+                    <TaskActionButtons
+                        project={project}
+                        task={task}
+                    />
                 </div>
-
-                {(
-                    task.status === 'pending'
-                    || task.status === 'waiting'
-                )
-                && !task.last_handoff?.id && (
-                    <p className="text-muted-foreground text-xs">
-                        No dispatchable durable handoff is currently recorded,
-                        so no Run action is available.
-                    </p>
-                )}
             </CardHeader>
+
+            <WaitingContinuationPanel
+                project={project}
+                task={task}
+            />
         </Card>
     );
 }
@@ -863,7 +1276,8 @@ function latestCandidateReview(
 }
 
 /**
- * Render the sticky factual Task inspector using only persisted repository data.
+ * Render the narrow sticky Task inspector as one bordered surface with compact
+ * aligned metadata and progressive disclosure for long persisted values.
  */
 function TaskDetails({
     task,
@@ -874,52 +1288,47 @@ function TaskDetails({
     dependency: Dependency;
     workRequest: SourceWorkRequest;
 }) {
-    const latestReview = latestCandidateReview(task.candidate_reviews);
+    const latestReview = latestCandidateReview(
+        task.candidate_reviews,
+    );
+
     const latestHandoff =
         [...task.handoffs].sort(
             (left, right) => right.id - left.id,
         )[0] ?? null;
 
-    const hasCandidateMetadata =
-        task.branch_name !== null
-        || task.worktree_path !== null
-        || task.candidate_tree_sha !== null
-        || task.commit_sha !== null
-        || task.pull_request_url !== null
-        || task.candidate_kind !== null
-        || task.changed_files.length > 0;
-
     return (
-        <Card className="gap-0 overflow-hidden py-0">
-            <CardHeader className="border-border border-b px-4 py-4">
+        <Card className="gap-0 py-0 shadow-none">
+            <CardHeader className="border-border bg-card z-10 border-b px-4 py-3.5 lg:sticky lg:top-0">
                 <h2 className="font-semibold">Task Details</h2>
             </CardHeader>
 
-            <CardContent className="grid gap-5 p-4">
+            <CardContent className="p-0">
                 <DetailsSection title="Overview">
-                    <div>
-                        <p className="text-muted-foreground text-xs">
-                            Objective
-                        </p>
-                        <p className="mt-1 text-sm whitespace-pre-wrap">
-                            {task.objective}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-muted-foreground text-xs">
-                            Implementation specification
-                        </p>
-                        {task.implementation_spec ? (
-                            <div className="mt-1 max-h-56 overflow-y-auto text-sm whitespace-pre-wrap">
-                                {task.implementation_spec}
+                    <dl className="grid gap-2.5">
+                        <MetadataField label="Objective">
+                            <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words pr-1">
+                                {task.objective}
                             </div>
-                        ) : (
-                            <p className="text-muted-foreground mt-1 text-sm">
-                                Not provided.
-                            </p>
-                        )}
-                    </div>
+                        </MetadataField>
+
+                        <MetadataField label="Implementation spec">
+                            {task.implementation_spec ? (
+                                <details className="min-w-0">
+                                    <summary className="focus-visible:ring-ring cursor-pointer rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2">
+                                        View spec
+                                    </summary>
+                                    <div className="text-muted-foreground mt-2 max-h-48 overflow-y-auto text-xs leading-5 whitespace-pre-wrap break-all">
+                                        {task.implementation_spec}
+                                    </div>
+                                </details>
+                            ) : (
+                                <span className="text-muted-foreground">
+                                    Not recorded
+                                </span>
+                            )}
+                        </MetadataField>
+                    </dl>
                 </DetailsSection>
 
                 <Separator />
@@ -947,7 +1356,7 @@ function TaskDetails({
                         </MetadataField>
 
                         <MetadataField label="Repair cycles">
-                            {task.repair_cycle_count} of{' '}
+                            {task.repair_cycle_count} /{' '}
                             {task.repair_cycle_limit}
                         </MetadataField>
 
@@ -958,35 +1367,29 @@ function TaskDetails({
                         <MetadataField label="Latest handoff">
                             {latestHandoff ? (
                                 <span className="capitalize">
-                                    {humanize(
-                                        latestHandoff.from_role ?? 'unknown',
-                                    )}{' '}
-                                    →{' '}
-                                    {humanize(
-                                        latestHandoff.to_role ?? 'unknown',
+                                    {formatRoleRoute(
+                                        latestHandoff.from_role,
+                                        latestHandoff.to_role,
                                     )}
                                 </span>
                             ) : task.last_handoff?.to_role ? (
                                 <span className="capitalize">
-                                    To{' '}
-                                    {humanize(task.last_handoff.to_role)}
+                                    {task.last_handoff.from_role
+                                        ? formatRoleRoute(
+                                              task.last_handoff.from_role,
+                                              task.last_handoff.to_role,
+                                          )
+                                        : `To ${humanize(task.last_handoff.to_role)}`}
                                 </span>
                             ) : (
                                 'None'
                             )}
                         </MetadataField>
 
-                        {latestHandoff && (
-                            <MetadataField label="Handoff reason">
-                                <span className="capitalize">
-                                    {humanize(latestHandoff.reason)}
-                                </span>
-                            </MetadataField>
-                        )}
-
-                        {(task.blocked_reason || task.outcome === 'blocked') && (
+                        {(task.blocked_reason
+                            || task.outcome === 'blocked') && (
                             <MetadataField label="Blocked reason">
-                                <span className="text-destructive whitespace-pre-wrap">
+                                <span className="text-destructive whitespace-pre-wrap break-words">
                                     {task.blocked_reason
                                         || 'Blocked without an additional recorded reason.'}
                                 </span>
@@ -998,78 +1401,45 @@ function TaskDetails({
                 <Separator />
 
                 <DetailsSection title="Candidate & Repository">
-                    {!hasCandidateMetadata ? (
-                        <p className="text-muted-foreground text-sm">
-                            No candidate or Task worktree metadata has been
-                            recorded yet.
-                        </p>
-                    ) : (
-                        <dl className="grid gap-2.5">
-                            <MetadataField label="Branch" mono>
-                                {task.branch_name ?? 'Not recorded'}
-                            </MetadataField>
+                    <dl className="grid gap-2.5">
+                        <MetadataField label="Branch" mono>
+                            {task.branch_name ?? 'Not recorded'}
+                        </MetadataField>
 
-                            <MetadataField label="Candidate kind">
-                                <span className="capitalize">
-                                    {task.candidate_kind
-                                        ? humanize(task.candidate_kind)
-                                        : 'Not recorded'}
-                                </span>
-                            </MetadataField>
+                        <MetadataField label="Candidate kind">
+                            <span className="capitalize">
+                                {task.candidate_kind
+                                    ? humanize(task.candidate_kind)
+                                    : 'Not recorded'}
+                            </span>
+                        </MetadataField>
 
-                            <MetadataField label="Candidate tree">
-                                {task.candidate_tree_sha ? (
-                                    <div className="flex min-w-0 items-center gap-1">
-                                        <span
-                                            className="min-w-0 break-all font-mono"
-                                            title={task.candidate_tree_sha}
-                                        >
-                                            {shortSha(
-                                                task.candidate_tree_sha,
-                                            )}
-                                        </span>
-                                        <CopyValueButton
-                                            value={task.candidate_tree_sha}
-                                            label="candidate tree SHA"
-                                        />
-                                    </div>
-                                ) : (
-                                    'Not recorded'
-                                )}
-                            </MetadataField>
+                        <MetadataField label="Candidate tree">
+                            <CopyableSha
+                                value={task.candidate_tree_sha}
+                                label="candidate tree SHA"
+                            />
+                        </MetadataField>
 
-                            <MetadataField label="Commit SHA">
-                                {task.commit_sha ? (
-                                    <div className="flex min-w-0 items-center gap-1">
-                                        <span
-                                            className="min-w-0 break-all font-mono"
-                                            title={task.commit_sha}
-                                        >
-                                            {shortSha(task.commit_sha)}
-                                        </span>
-                                        <CopyValueButton
-                                            value={task.commit_sha}
-                                            label="commit SHA"
-                                        />
-                                    </div>
-                                ) : (
-                                    'Not recorded'
-                                )}
-                            </MetadataField>
+                        <MetadataField label="Commit SHA">
+                            <CopyableSha
+                                value={task.commit_sha}
+                                label="commit SHA"
+                            />
+                        </MetadataField>
 
-                            <MetadataField label="Worktree" mono>
-                                {task.worktree_path ?? 'Not recorded'}
-                            </MetadataField>
+                        <MetadataField label="Worktree" mono>
+                            {task.worktree_path ?? 'Not recorded'}
+                        </MetadataField>
 
-                            <MetadataField label="Changed files">
-                                {task.changed_files.length}
-                            </MetadataField>
-                        </dl>
-                    )}
+                        <MetadataField label="Changed files">
+                            {task.changed_files.length}
+                        </MetadataField>
+                    </dl>
 
                     {task.changed_files.length > 0 && (
                         <details className="border-border rounded-md border">
-                            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                            <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
                                 Inspect changed files
                             </summary>
                             <ul className="border-border grid max-h-56 gap-1 overflow-y-auto border-t p-3">
@@ -1084,24 +1454,6 @@ function TaskDetails({
                             </ul>
                         </details>
                     )}
-
-                    {task.pull_request_url && (
-                        <Button
-                            asChild
-                            variant="outline"
-                            size="sm"
-                            className="w-fit"
-                        >
-                            <a
-                                href={task.pull_request_url}
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                View Pull Request
-                                <ExternalLink aria-hidden="true" />
-                            </a>
-                        </Button>
-                    )}
                 </DetailsSection>
 
                 <Separator />
@@ -1112,61 +1464,47 @@ function TaskDetails({
                             No QA review has been recorded for this Task yet.
                         </p>
                     ) : (
-                        <div className="grid gap-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <ReviewStatusBadge
-                                    status={latestReview.status}
-                                />
-                                <span className="text-muted-foreground text-xs">
-                                    {formatTimestamp(
-                                        latestReview.created_at,
-                                    )}
-                                </span>
-                            </div>
+                        <>
+                            <dl className="grid gap-2.5">
+                                <MetadataField label="Approval state">
+                                    <ReviewStatusBadge
+                                        status={latestReview.status}
+                                    />
+                                </MetadataField>
 
-                            {latestReview.summary && (
-                                <p className="text-sm whitespace-pre-wrap">
-                                    {latestReview.summary}
-                                </p>
-                            )}
+                                <MetadataField label="Reviewed candidate">
+                                    <CopyableSha
+                                        value={
+                                            latestReview.candidate_tree_sha
+                                        }
+                                        label="reviewed candidate SHA"
+                                    />
+                                </MetadataField>
 
-                            {latestReview.candidate_tree_sha && (
-                                <div>
-                                    <p className="text-muted-foreground text-xs">
-                                        Reviewed candidate
-                                    </p>
-                                    <div className="mt-1 flex items-center gap-1">
-                                        <span
-                                            className="font-mono text-xs"
-                                            title={
-                                                latestReview.candidate_tree_sha
-                                            }
-                                        >
-                                            {shortSha(
-                                                latestReview.candidate_tree_sha,
-                                            )}
+                                <MetadataField label="Summary">
+                                    {latestReview.summary ? (
+                                        <div className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words pr-1">
+                                            {latestReview.summary}
+                                        </div>
+                                    ) : (
+                                        <span className="text-muted-foreground">
+                                            Not recorded
                                         </span>
-                                        <CopyValueButton
-                                            value={
-                                                latestReview.candidate_tree_sha
-                                            }
-                                            label="reviewed candidate SHA"
-                                        />
-                                    </div>
-                                </div>
-                            )}
+                                    )}
+                                </MetadataField>
+                            </dl>
 
                             <details className="border-border rounded-md border">
-                                <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                                <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
                                     Latest findings
                                 </summary>
-                                <pre className="bg-muted border-border max-h-64 overflow-auto border-t p-3 text-xs whitespace-pre-wrap">
+                                <pre className="bg-muted/50 border-border max-h-64 overflow-y-auto border-t p-3 text-xs leading-5 whitespace-pre-wrap break-all">
                                     {serializeFindings(
                                         latestReview.findings,
                                     )}
                                 </pre>
                             </details>
-                        </div>
+                        </>
                     )}
                 </DetailsSection>
 
@@ -1195,55 +1533,38 @@ function TaskDetails({
                                     : 'Not recorded'}
                             </span>
                         </MetadataField>
+
+                        <MetadataField label="Summary">
+                            {workRequest.summary ? (
+                                <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words pr-1">
+                                    {workRequest.summary}
+                                </div>
+                            ) : (
+                                <span className="text-muted-foreground">
+                                    Not recorded
+                                </span>
+                            )}
+                        </MetadataField>
                     </dl>
 
-                    <div>
-                        <p className="text-muted-foreground text-xs">
-                            Prompt
-                        </p>
-                        <div className="mt-1 max-h-48 overflow-y-auto text-sm whitespace-pre-wrap">
+                    <details className="border-border rounded-md border">
+                        <summary className="focus-visible:ring-ring cursor-pointer rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset">
+                            Inspect request prompt
+                        </summary>
+                        <div className="border-border max-h-56 overflow-y-auto border-t p-3 text-sm leading-6 whitespace-pre-wrap break-all">
                             {workRequest.prompt}
                         </div>
-                    </div>
-
-                    {workRequest.summary && (
-                        <div>
-                            <p className="text-muted-foreground text-xs">
-                                Summary
-                            </p>
-                            <p className="mt-1 text-sm whitespace-pre-wrap">
-                                {workRequest.summary}
-                            </p>
-                        </div>
-                    )}
+                    </details>
 
                     {workRequest.failure_reason && (
                         <div className="border-destructive/30 bg-destructive/5 rounded-md border p-3">
                             <p className="text-destructive text-xs font-medium">
                                 Failure information
                             </p>
-                            <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">
+                            <p className="text-muted-foreground mt-1 text-sm leading-5 whitespace-pre-wrap break-all">
                                 {workRequest.failure_reason}
                             </p>
                         </div>
-                    )}
-
-                    {workRequest.source_url && (
-                        <Button
-                            asChild
-                            variant="outline"
-                            size="sm"
-                            className="w-fit"
-                        >
-                            <a
-                                href={workRequest.source_url}
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                Open source
-                                <ExternalLink aria-hidden="true" />
-                            </a>
-                        </Button>
                     )}
                 </DetailsSection>
             </CardContent>
@@ -1252,7 +1573,8 @@ function TaskDetails({
 }
 
 /**
- * Render the dedicated responsive Task inspection workspace.
+ * Render the dedicated Task workspace with Agent workflow history dominant on
+ * the left and the sticky Task inspector alongside it from the lg breakpoint.
  */
 export default function TaskShow({
     project,
@@ -1264,16 +1586,16 @@ export default function TaskShow({
         <>
             <Head title={`Task #${task.id} · ${task.title}`} />
 
-            <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 p-4 md:p-6 xl:p-8">
+            <main className="mx-auto flex w-full max-w-[1800px] min-w-0 flex-col gap-4 p-4 lg:p-5 xl:p-6">
                 <TaskHeader project={project} task={task} />
 
-                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(20rem,3fr)]">
+                <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] min-[1440px]:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
                     <section
                         className="min-w-0"
                         aria-labelledby="workflow-history-heading"
                     >
-                        <Card className="gap-0 py-0">
-                            <CardHeader className="border-border border-b px-4 py-4">
+                        <Card className="gap-0 py-0 shadow-none">
+                            <CardHeader className="border-border border-b px-4 py-3.5">
                                 <div>
                                     <h2
                                         id="workflow-history-heading"
@@ -1282,8 +1604,8 @@ export default function TaskShow({
                                         Agent workflow history
                                     </h2>
                                     <p className="text-muted-foreground mt-1 text-sm">
-                                        Chronological durable Agent runs,
-                                        handoffs, and QA evidence.
+                                        Chronological Agent turns with durable
+                                        handoff and QA evidence.
                                     </p>
                                 </div>
                             </CardHeader>
@@ -1294,7 +1616,7 @@ export default function TaskShow({
                         </Card>
                     </section>
 
-                    <aside className="min-w-0 xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain">
+                    <aside className="min-w-0 lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
                         <TaskDetails
                             task={task}
                             dependency={dependency}
