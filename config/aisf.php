@@ -70,11 +70,11 @@ return [
     | Maximum QA <-> Coder Repair Cycles
     |--------------------------------------------------------------------------
     |
-    | A Task's repair cycle count is the number of QA "changes_requested"
-    | reviews plus CI-failure repair handoffs it has accumulated. Once this
-    | limit is reached, the next repair handoff durably fails the Task
-    | (blocked_reason explains why) instead of looping forever. An operator
-    | must Retry it after intervening.
+    | Each operator retry starts a fresh bounded autonomous repair episode.
+    | Within that active episode, each QA changes_requested review and each
+    | authoritative CI-failure handoff consumes one repair cycle. Historical
+    | evidence remains durable and queryable but does not consume a later
+    | operator-approved retry budget.
     |
     */
 
@@ -91,53 +91,5 @@ return [
     */
 
     'max_protocol_recoveries' => (int) env('AISF_MAX_PROTOCOL_RECOVERIES', 2),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Trusted Local Agent Execution
-    |--------------------------------------------------------------------------
-    |
-    | When enabled, an Agent's own Codex/Claude subprocess may use the AISF
-    | worker user's pre-existing host Docker access directly, the same as a
-    | developer's terminal session, instead of being forced through
-    | run_project_verification for every Docker-dependent check. Only enable
-    | this for a worker deployment where every configured Project is fully
-    | trusted. The Docker-sandboxed verification bridge above remains
-    | available regardless of this flag.
-    |
-    | agent_runtime_path/agent_runtime_home let the queue worker's Codex/Claude
-    | subprocess resolve the same PATH/HOME a developer's interactive shell
-    | would (Volta/NVM-managed binaries included), independent of this flag.
-    | Leave unset to inherit the worker process's ambient environment.
-    |
-    */
-
-    'trusted_local_execution' => filter_var(
-        env('AISF_TRUSTED_LOCAL_EXECUTION', false),
-        FILTER_VALIDATE_BOOL,
-    ),
-
-    'agent_runtime_path' => env('AISF_AGENT_PATH'),
-
-    'agent_runtime_home' => env('AISF_AGENT_HOME'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Agent Turn Timeout
-    |--------------------------------------------------------------------------
-    |
-    | The maximum number of seconds a single Codex/Claude provider turn may
-    | run before AISF treats it as an infrastructure failure. Without this,
-    | a dead or hung provider/MCP subprocess left the AgentRun permanently
-    | stuck in "running" instead of failing cleanly through the existing
-    | durable reconciliation and repair path. Keep this comfortably below
-    | the queue connection's retry_after (queue.php / DB_QUEUE_RETRY_AFTER)
-    | so a turn always finishes reconciling before the queue driver would
-    | otherwise consider the job's reservation abandoned and release it
-    | for a second, doomed attempt.
-    |
-    */
-
-    'agent_turn_timeout' => max(60, (int) env('AISF_AGENT_TURN_TIMEOUT', 3300)),
 
 ];

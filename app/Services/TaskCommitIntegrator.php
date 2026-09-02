@@ -4,21 +4,19 @@ namespace App\Services;
 
 use App\Models\AgentRun;
 use App\Models\AgentRunAction;
+use App\Models\ProjectVerificationRun;
 use App\Models\Task;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use UnexpectedValueException;
 
 /**
- * Finalize a Coder reported commit. Laravel, not the Agent, verifies that the current
- * candidate still has QA approval, verifies the commit and Project CI check, and only then
- * opens a pull request and completes the Task. A CI failure becomes a durable, bounded repair
- * handoff back to the Coder instead of a terminal failure or a red pull request.
+ * Finalize one QA-approved candidate using immutable Git identity and authoritative host verification evidence.
  */
 class TaskCommitIntegrator
 {
     /**
-     * Initialize the Task integration service with its existing verification collaborators.
+     * Initialize finalization with candidate, verification, repair, audit, and Git collaborators.
      */
     public function __construct(
         private readonly CandidateAcceptanceGate $candidateAcceptanceGate,
@@ -26,10 +24,11 @@ class TaskCommitIntegrator
         private readonly AgentRunActionRecorder $actionRecorder,
         private readonly TaskWorktreeManager $worktreeManager,
         private readonly TaskCandidateFingerprint $candidateFingerprint,
+        private readonly ProjectVerificationService $projectVerificationService,
     ) {}
 
     /**
-     * Verify and integrate the Coder reported candidate only after current QA approval.
+     * Verify and integrate the active approved Coder candidate without executing an independent legacy CI command.
      */
     public function finalize(
         Task $task,
@@ -52,7 +51,9 @@ class TaskCommitIntegrator
             || (int) ($coderRun->execution_metadata['accepted_handoff_id'] ?? 0)
                 !== (int) ($task->last_handoff['id'] ?? 0)
         ) {
-            throw new UnexpectedValueException('Only the active approved Coder execution may finalize this Task.');
+            throw new UnexpectedValueException(
+                'Only the active approved Coder execution may finalize this Task.',
+            );
         }
 
         if (! $this->candidateAcceptanceGate->hasCurrentApproval($task)) {
@@ -61,36 +62,43 @@ class TaskCommitIntegrator
             );
         }
 
-        $currentTreeSha = $this->candidateFingerprint->currentTreeSha($task);
-
-        if ($currentTreeSha !== $task->candidate_tree_sha) {
-            throw new UnexpectedValueException(
-                'The Task worktree no longer matches the approved candidate tree.',
-            );
-        }
-
+        $this->assertCurrentCandidateTree($task);
         $this->actionRecorder->assertVaultNoteWritten($coderRun);
 
         if ($task->candidate_kind === 'no_change') {
             if (filled($commitSha)) {
-                throw new UnexpectedValueException('A no-change candidate must not create a commit.');
+                throw new UnexpectedValueException(
+                    'A no-change candidate must not create a commit.',
+                );
             }
 
-            $baseTreeSha = $this->candidateFingerprint->forTask($task)['base_tree_sha'];
+            $baseTreeSha = $this->candidateFingerprint
+                ->forTask($task)['base_tree_sha'];
 
-            if ($currentTreeSha !== $baseTreeSha) {
-                throw new UnexpectedValueException('A no-change candidate must equal the Task base tree.');
+            if ($task->candidate_tree_sha !== $baseTreeSha) {
+                throw new UnexpectedValueException(
+                    'A no-change candidate must equal the Task base tree.',
+                );
             }
 
-            $ci = $this->worktreeManager->runCiCheck($task);
+            $verification = $this->authoritativeCiVerification(
+                $task,
+                $coderRun,
+                $executionToken,
+            );
 
-            if (! $ci['passed']) {
-                $ci['environment']
-                    ? $this->blockOnEnvironmentFailure($task, $coderRun, $ci['output'])
-                    : $this->repair($task, $coderRun, $ci['output']);
+            if ($verification->status === ProjectVerificationRun::STATUS_FAILED) {
+                $this->repair(
+                    $task,
+                    $coderRun,
+                    $this->verificationOutput($verification),
+                );
 
                 return;
             }
+
+            $this->assertVerificationPassed($verification);
+            $this->assertCurrentCandidateTree($task);
 
             $this->complete($task, $coderRun, [
                 'outcome' => 'no_change',
@@ -102,27 +110,50 @@ class TaskCommitIntegrator
         }
 
         if ($task->candidate_kind !== 'changes' || ! filled($commitSha)) {
-            throw new UnexpectedValueException('A changed candidate requires a commit SHA for finalization.');
+            throw new UnexpectedValueException(
+                'A changed candidate requires a commit SHA for finalization.',
+            );
         }
 
-        $verifiedSha = $this->worktreeManager->verifyCommitExists($task, $commitSha);
+        $verifiedSha = $this->worktreeManager
+            ->verifyCommitExists($task, $commitSha);
+
         $this->worktreeManager->verifyHeadMatches($task, $verifiedSha);
 
-        if ($this->candidateFingerprint->commitTreeSha($task, $verifiedSha) !== $task->candidate_tree_sha) {
-            throw new UnexpectedValueException('The final commit tree does not match the approved candidate tree.');
+        if (
+            $this->candidateFingerprint->commitTreeSha($task, $verifiedSha)
+            !== $task->candidate_tree_sha
+        ) {
+            throw new UnexpectedValueException(
+                'The final commit tree does not match the approved candidate tree.',
+            );
         }
 
-        $ci = $this->worktreeManager->runCiCheck($task);
+        $verification = $this->authoritativeCiVerification(
+            $task,
+            $coderRun,
+            $executionToken,
+        );
 
-        if (! $ci['passed']) {
-            $ci['environment']
-                ? $this->blockOnEnvironmentFailure($task, $coderRun, $ci['output'])
-                : $this->repair($task, $coderRun, $ci['output']);
+        if ($verification->status === ProjectVerificationRun::STATUS_FAILED) {
+            $this->repair(
+                $task,
+                $coderRun,
+                $this->verificationOutput($verification),
+            );
 
             return;
         }
 
-        $pullRequest = $this->worktreeManager->pushAndOpenPullRequest($task, $verifiedSha, $task->title, $summary);
+        $this->assertVerificationPassed($verification);
+        $this->assertCurrentCandidateTree($task);
+
+        $pullRequest = $this->worktreeManager->pushAndOpenPullRequest(
+            $task,
+            $verifiedSha,
+            $task->title,
+            $summary,
+        );
 
         $this->complete($task, $coderRun, [
             'outcome' => 'implemented',
@@ -131,9 +162,140 @@ class TaskCommitIntegrator
     }
 
     /**
+     * Require the physical Task worktree to still match its durable approved candidate identity.
+     */
+    private function assertCurrentCandidateTree(Task $task): void
+    {
+        if (
+            ! filled($task->candidate_tree_sha)
+            || $this->candidateFingerprint->currentTreeSha($task)
+                !== $task->candidate_tree_sha
+        ) {
+            throw new UnexpectedValueException(
+                'The Task worktree no longer matches the approved candidate tree.',
+            );
+        }
+    }
+
+    /**
+     * Reuse decisive exact-candidate CI evidence or run the approved CI profile through the single host verification service.
+     */
+    private function authoritativeCiVerification(
+        Task $task,
+        AgentRun $coderRun,
+        string $executionToken,
+    ): ProjectVerificationRun {
+        $task->loadMissing('workRequest');
+
+        $verification = ProjectVerificationRun::query()
+            ->where('project_id', $task->workRequest->project_id)
+            ->where('task_id', $task->id)
+            ->where('profile', 'ci')
+            ->where('target_type', 'task_candidate')
+            ->where('candidate_tree_sha', $task->candidate_tree_sha)
+            ->whereIn('status', [
+                ProjectVerificationRun::STATUS_PASSED,
+                ProjectVerificationRun::STATUS_FAILED,
+            ])
+            ->latest('id')
+            ->first();
+
+        if (! $verification instanceof ProjectVerificationRun) {
+            $verification = $this->projectVerificationService->run(
+                $coderRun,
+                $executionToken,
+                'ci',
+                Str::limit(
+                    sprintf(
+                        'task-finalization-ci-%d-%s',
+                        $task->id,
+                        (string) $task->candidate_tree_sha,
+                    ),
+                    100,
+                    '',
+                ),
+            );
+        }
+
+        $this->assertVerificationMatchesCandidate($task, $verification);
+
+        return $verification;
+    }
+
+    /**
+     * Reject verification evidence belonging to another Project, Task, profile, target, or candidate tree.
+     */
+    private function assertVerificationMatchesCandidate(
+        Task $task,
+        ProjectVerificationRun $verification,
+    ): void {
+        $task->loadMissing('workRequest');
+
+        if (
+            (int) $verification->project_id
+                !== (int) $task->workRequest->project_id
+            || (int) $verification->task_id !== (int) $task->id
+            || $verification->profile !== 'ci'
+            || $verification->target_type !== 'task_candidate'
+            || ! is_string($verification->candidate_tree_sha)
+            || ! is_string($task->candidate_tree_sha)
+            || ! hash_equals(
+                $task->candidate_tree_sha,
+                $verification->candidate_tree_sha,
+            )
+        ) {
+            throw new UnexpectedValueException(
+                'Project verification evidence does not belong to the current Task candidate.',
+            );
+        }
+    }
+
+    /**
+     * Permit integration only for an authoritative passed verification and classify inconclusive statuses explicitly.
+     */
+    private function assertVerificationPassed(
+        ProjectVerificationRun $verification,
+    ): void {
+        if ($verification->status === ProjectVerificationRun::STATUS_PASSED) {
+            return;
+        }
+
+        $message = match ($verification->status) {
+            ProjectVerificationRun::STATUS_STALE_CANDIDATE => 'Authoritative CI verification became stale and cannot authorize finalization.',
+            ProjectVerificationRun::STATUS_ENVIRONMENT_UNAVAILABLE => 'The CI verification environment is unavailable. No Coder repair cycle was consumed.',
+            ProjectVerificationRun::STATUS_TIMED_OUT => 'Authoritative CI verification timed out. No Coder repair cycle was consumed.',
+            ProjectVerificationRun::STATUS_RUNNING => 'Authoritative CI verification is still running and cannot authorize finalization.',
+            default => 'Authoritative CI verification did not produce a finalization verdict.',
+        };
+
+        throw new UnexpectedValueException($message);
+    }
+
+    /**
+     * Build bounded diagnostic evidence for a genuine code-level CI repair handoff.
+     */
+    private function verificationOutput(
+        ProjectVerificationRun $verification,
+    ): string {
+        $parts = array_values(array_filter([
+            trim((string) $verification->diagnostic),
+            trim((string) $verification->stdout),
+            trim((string) $verification->stderr),
+        ], static fn (string $part): bool => $part !== ''));
+
+        return $parts !== []
+            ? implode("\n\n", $parts)
+            : 'The authoritative CI profile failed without additional output.';
+    }
+
+    /**
      * Atomically complete the Task and attribute candidate finalization to the responsible Coder run.
      *
-     * @param  array{outcome: 'implemented'|'no_change', commit_sha: string|null, pull_request_url: string|null}  $result
+     * @param array{
+     *     outcome: 'implemented'|'no_change',
+     *     commit_sha: string|null,
+     *     pull_request_url: string|null
+     * } $result
      */
     private function complete(
         Task $task,
@@ -168,9 +330,15 @@ class TaskCommitIntegrator
                 $locked,
             );
 
-            $workRequest = $locked->workRequest()->lockForUpdate()->firstOrFail();
+            $workRequest = $locked->workRequest()
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            if (! $workRequest->tasks()->where('status', '!=', 'completed')->exists()) {
+            if (
+                ! $workRequest->tasks()
+                    ->where('status', '!=', 'completed')
+                    ->exists()
+            ) {
                 $workRequest->update([
                     'status' => 'completed',
                     'outcome' => 'implemented',
@@ -188,42 +356,7 @@ class TaskCommitIntegrator
     }
 
     /**
-     * Block the Task on an unavailable or misconfigured finalization environment instead of treating
-     * it as a code-level defect. Unlike `repair()`, this preserves the approved candidate and its
-     * repair-cycle budget: the candidate itself was never at fault, only the CI environment was.
-     */
-    private function blockOnEnvironmentFailure(
-        Task $task,
-        AgentRun $coderRun,
-        string $ciOutput,
-    ): void {
-        DB::transaction(function () use ($task, $coderRun, $ciOutput): void {
-            $locked = Task::query()
-                ->lockForUpdate()
-                ->findOrFail($task->id);
-
-            if ($locked->status !== 'running') {
-                return;
-            }
-
-            $locked->update([
-                'status' => 'failed',
-                'outcome' => 'blocked',
-                'blocked_reason' => 'The finalization CI check failed because of an unavailable or misconfigured '
-                    .'verification environment, not a code-level defect. The approved candidate was preserved. '
-                    .'Diagnostic: '.Str::limit($ciOutput, 2000, ''),
-            ]);
-
-            $this->actionRecorder->record(
-                $coderRun,
-                AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
-                $locked,
-            );
-        }, attempts: 3);
-    }
-
-    /**
-     * Persist a bounded CI repair outcome and attribute any created handoff to the Coder run.
+     * Persist one genuine authoritative CI failure and then enforce the active repair limit.
      */
     private function repair(
         Task $task,
@@ -243,22 +376,6 @@ class TaskCommitIntegrator
                 ->findOrFail($task->id);
 
             if ($locked->status !== 'running') {
-                return;
-            }
-
-            if ($this->repairCycleGuard->limitExceeded($locked)) {
-                $locked->update([
-                    'status' => 'failed',
-                    'outcome' => 'blocked',
-                    'blocked_reason' => "The Task exceeded its repair cycle limit ({$limit}) after a CI failure and requires operator review.",
-                ]);
-
-                $this->actionRecorder->record(
-                    $coderRun,
-                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
-                    $locked,
-                );
-
                 return;
             }
 
@@ -284,19 +401,42 @@ class TaskCommitIntegrator
                 $handoff,
             );
 
-            $locked->update([
-                'status' => 'waiting',
+            $handoffState = [
+                'id' => $handoff->id,
+                'to_role' => 'coder',
+                'reason' => 'ci_failed',
+                'payload' => $handoff->payload,
+            ];
+
+            $candidateReset = [
                 'candidate_tree_sha' => null,
                 'candidate_created_by_run_id' => null,
                 'candidate_kind' => null,
                 'commit_sha' => null,
+                'last_handoff' => $handoffState,
+            ];
+
+            if ($this->repairCycleGuard->limitExceeded($locked)) {
+                $locked->update([
+                    ...$candidateReset,
+                    'status' => 'failed',
+                    'outcome' => 'blocked',
+                    'blocked_reason' => "The Task reached its repair cycle limit ({$limit}) after an authoritative CI failure and requires operator review.",
+                ]);
+
+                $this->actionRecorder->record(
+                    $coderRun,
+                    AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                    $locked,
+                );
+
+                return;
+            }
+
+            $locked->update([
+                ...$candidateReset,
+                'status' => 'waiting',
                 'blocked_reason' => null,
-                'last_handoff' => [
-                    'id' => $handoff->id,
-                    'to_role' => 'coder',
-                    'reason' => 'ci_failed',
-                    'payload' => $handoff->payload,
-                ],
             ]);
         }, attempts: 3);
     }

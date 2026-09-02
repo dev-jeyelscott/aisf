@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessAgentExecution;
 use App\Models\Project;
 use App\Models\Task;
+use App\Services\RepairCycleGuard;
 use App\Services\TaskPayloadBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -57,7 +59,7 @@ class TaskController extends Controller
     }
 
     /**
-     * Queue the next Agent execution for a pending or waiting Task, optionally carrying an operator instruction.
+     * Queue the next Agent execution for a pending or waiting Task with an optional operator instruction.
      */
     public function run(
         Request $request,
@@ -84,19 +86,34 @@ class TaskController extends Controller
     }
 
     /**
-     * Re-enter a failed Task as pending so the dispatcher gives it a fresh Coder turn.
+     * Re-enter a failed Task with fresh protocol and repair budgets while preserving its durable redispatch handoff.
      */
     public function retry(
         Project $project,
         Task $task,
+        RepairCycleGuard $repairCycleGuard,
     ): RedirectResponse {
         $this->assertTaskBelongsToProject($project, $task);
 
-        if ($task->status === 'failed') {
-            $lastHandoff = $task->last_handoff;
+        $retryTask = DB::transaction(function () use (
+            $task,
+            $repairCycleGuard,
+        ): ?Task {
+            $locked = Task::query()
+                ->lockForUpdate()
+                ->findOrFail($task->id);
+
+            if ($locked->status !== 'failed') {
+                return null;
+            }
+
+            $lastHandoff = $locked->last_handoff;
 
             if (! isset($lastHandoff['id'])) {
-                $handoff = $task->handoffs()->latest('id')->first();
+                $handoff = $locked->handoffs()
+                    ->with('toProjectAgent')
+                    ->latest('id')
+                    ->first();
 
                 if ($handoff !== null) {
                     $lastHandoff = [
@@ -108,7 +125,9 @@ class TaskController extends Controller
                 }
             }
 
-            $task->update([
+            $repairCycleGuard->startNewCycleForLockedTask($locked);
+
+            $locked->update([
                 'status' => 'pending',
                 'outcome' => null,
                 'protocol_recovery_count' => 0,
@@ -116,16 +135,20 @@ class TaskController extends Controller
                 'last_handoff' => $lastHandoff,
             ]);
 
-            if (isset($lastHandoff['id'])) {
-                ProcessAgentExecution::dispatch($task->fresh());
-            }
+            return isset($lastHandoff['id'])
+                ? $locked->fresh()
+                : null;
+        }, attempts: 3);
+
+        if ($retryTask instanceof Task) {
+            ProcessAgentExecution::dispatch($retryTask);
         }
 
         return to_route('projects.tasks.show', [$project, $task]);
     }
 
     /**
-     * Reject a Task route when its parent WorkRequest belongs to another Project.
+     * Reject Task routes whose parent WorkRequest belongs to another Project.
      */
     private function assertTaskBelongsToProject(
         Project $project,
