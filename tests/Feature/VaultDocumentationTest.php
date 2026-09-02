@@ -16,17 +16,18 @@ use Laravel\Mcp\Server\Tool;
 use UnexpectedValueException;
 
 /**
- * Expose only get_vault_rules for focused MCP governance-access tests.
+ * Expose the focused vault documentation tools exercised by this feature.
  */
 class VaultDocumentationMcpServer extends Server
 {
     /**
-     * The governance-only tool exercised by this feature.
+     * The vault documentation tools exercised by this feature.
      *
      * @var array<int, class-string<Tool>>
      */
     protected array $tools = [
         GetVaultRules::class,
+        WriteVaultWorkLog::class,
     ];
 }
 

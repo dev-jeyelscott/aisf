@@ -155,29 +155,27 @@ class AgentHarness
 
         try {
             $supportsResume = $this->canResume($agent);
+            $isResuming = $providerSessionId !== null && $supportsResume;
             $command = ['codex', 'exec'];
 
-            if ($providerSessionId !== null && $supportsResume) {
+            if ($isResuming) {
                 $command[] = 'resume';
                 $command[] = $providerSessionId;
-            }
-
-            if ($supportsResume) {
                 $command[] = '--json';
             } else {
-                $command[] = '--ephemeral';
+                $command[] = $supportsResume ? '--json' : '--ephemeral';
+                $command[] = '--sandbox';
+                $command[] = $writable ? 'workspace-write' : 'read-only';
+                $command[] = '--color';
+                $command[] = 'never';
             }
 
-            $command[] = '--sandbox';
-            $command[] = $writable ? 'workspace-write' : 'read-only';
-            $command[] = '--color';
-            $command[] = 'never';
             $command[] = '-c';
             $command[] = 'mcp_servers.boost.command="php"';
             $command[] = '-c';
             $command[] = 'mcp_servers.boost.args='.$this->encodeJsonValue($this->boostMcpArgs());
 
-            if ($schemaPath !== null) {
+            if (! $isResuming && $schemaPath !== null) {
                 $command[] = '--output-schema';
                 $command[] = $schemaPath;
             }
@@ -201,9 +199,10 @@ class AgentHarness
                         output: null,
                         providerSessionId: null,
                         exitCode: $result->exitCode(),
-                        failureMessage: sprintf(
-                            'Codex Agent execution failed with exit code %s.',
-                            $result->exitCode() ?? 'unknown',
+                        failureMessage: $this->processFailureMessage(
+                            'Codex',
+                            $result->exitCode(),
+                            $result->errorOutput(),
                         ),
                     );
                 }
@@ -230,6 +229,7 @@ class AgentHarness
 
             return $this->parseCodexJsonResult(
                 $result->output(),
+                $result->errorOutput(),
                 $result->exitCode(),
                 $result->failed(),
             );
@@ -245,6 +245,7 @@ class AgentHarness
      */
     private function parseCodexJsonResult(
         string $rawOutput,
+        string $errorOutput,
         ?int $exitCode,
         bool $processFailed,
     ): AgentHarnessResult {
@@ -299,10 +300,7 @@ class AgentHarness
                 output: $finalMessage,
                 providerSessionId: filled($providerSessionId) ? $providerSessionId : null,
                 exitCode: $exitCode,
-                failureMessage: sprintf(
-                    'Codex Agent execution failed with exit code %s.',
-                    $exitCode ?? 'unknown',
-                ),
+                failureMessage: $this->processFailureMessage('Codex', $exitCode, $errorOutput),
             );
         }
 
@@ -322,6 +320,21 @@ class AgentHarness
             providerSessionId: filled($providerSessionId) ? $providerSessionId : null,
             exitCode: $exitCode,
         );
+    }
+
+    /**
+     * Format a bounded provider failure diagnostic for durable run evidence.
+     */
+    private function processFailureMessage(string $provider, ?int $exitCode, string $errorOutput): string
+    {
+        $message = sprintf('%s Agent execution failed with exit code %s.', $provider, $exitCode ?? 'unknown');
+        $diagnostic = trim($errorOutput);
+
+        if ($diagnostic !== '') {
+            $message .= ' Provider diagnostic: '.Str::limit($diagnostic, 2000, '');
+        }
+
+        return $message;
     }
 
     /**

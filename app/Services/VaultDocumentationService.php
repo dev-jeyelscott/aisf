@@ -175,7 +175,7 @@ class VaultDocumentationService
                 return false;
             }
 
-            if (file_exists($absolutePath) || is_link($absolutePath)) {
+            if ($this->pathExistsOrIsSymbolicLink($absolutePath)) {
                 throw new UnexpectedValueException(
                     'The vault work note destination already exists and is not an AISF retry or recovery.',
                 );
@@ -320,25 +320,13 @@ class VaultDocumentationService
     }
 
     /**
-     * Return execution metadata as a mutable array while rejecting unexpected cast state.
+     * Return execution metadata as a mutable array.
      *
      * @return array<string, mixed>
      */
     private function executionMetadata(AgentRun $run): array
     {
-        $metadata = $run->execution_metadata;
-
-        if ($metadata === null) {
-            return [];
-        }
-
-        if (! is_array($metadata)) {
-            throw new UnexpectedValueException(
-                'The AgentRun execution metadata is malformed.',
-            );
-        }
-
-        return $metadata;
+        return $run->execution_metadata ?? [];
     }
 
     /**
@@ -536,6 +524,14 @@ class VaultDocumentationService
     }
 
     /**
+     * Determine whether a filesystem path currently exists or represents a symbolic link.
+     */
+    private function pathExistsOrIsSymbolicLink(string $path): bool
+    {
+        return file_exists($path) || is_link($path);
+    }
+
+    /**
      * Exclusively create the exact Agent-authored Markdown bytes or verify an
      * already-created recovery file for the reserved path and content hash.
      */
@@ -545,7 +541,7 @@ class VaultDocumentationService
         string $markdown,
         string $sha256,
     ): void {
-        if (file_exists($absolutePath) || is_link($absolutePath)) {
+        if ($this->pathExistsOrIsSymbolicLink($absolutePath)) {
             $this->verifyWorkNoteFile(
                 $root,
                 $absolutePath,
@@ -558,7 +554,7 @@ class VaultDocumentationService
         $handle = @fopen($absolutePath, 'x+b');
 
         if ($handle === false) {
-            if (file_exists($absolutePath) || is_link($absolutePath)) {
+            if ($this->pathExistsOrIsSymbolicLink($absolutePath)) {
                 $this->verifyWorkNoteFile(
                     $root,
                     $absolutePath,
@@ -904,7 +900,7 @@ class VaultDocumentationService
             strlen($root) + 1,
         );
 
-        if ($relative === false || $relative === '') {
+        if ($relative === '') {
             return $directories;
         }
 
@@ -935,7 +931,7 @@ class VaultDocumentationService
             strlen($root) + 1,
         );
 
-        if ($relative === false || $relative === '') {
+        if ($relative === '') {
             return '.';
         }
 

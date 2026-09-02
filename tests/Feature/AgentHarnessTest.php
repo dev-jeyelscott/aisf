@@ -93,13 +93,7 @@ it('starts and resumes Codex with a persistent read-only thread when the install
             'resume',
             'codex-session-1',
             '--json',
-            '--sandbox',
-            'read-only',
-            '--color',
-            'never',
             ...feature04BoostMcpConfigArgs(),
-            '--output-schema',
-            '<schema>',
             '--model',
             'gpt-5',
             '-',
@@ -421,7 +415,7 @@ it('returns process failure metadata without exposing raw provider output', func
         ->and($result->output)->toBeNull()
         ->and($result->exitCode)->toBe(17)
         ->and($result->failureMessage)->toBe(
-            'Codex Agent execution failed with exit code 17.',
+            'Codex Agent execution failed with exit code 17. Provider diagnostic: provider error output',
         );
 });
 
