@@ -18,6 +18,9 @@ use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
 use App\Services\TaskWorktreeManager;
+use App\Services\VaultDocumentationService;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\Tool;
 use RuntimeException;
@@ -611,7 +614,7 @@ test('a later domain failure rolls back its handoff and action while preserving 
 });
 
 test('ordinary Agent completion does not record a workflow outcome action', function () {
-    [, , $run] = taskRoleHandoffFixture('coder');
+    [,, $run] = taskRoleHandoffFixture('coder');
 
     app(AgentSessionManager::class)->completeRun(
         $run,
@@ -630,7 +633,7 @@ test('ordinary Agent completion does not record a workflow outcome action', func
 });
 
 test('a failed Agent execution does not record a successful workflow outcome', function () {
-    [, , $run] = taskRoleHandoffFixture('coder');
+    [,, $run] = taskRoleHandoffFixture('coder');
 
     app(AgentSessionManager::class)->failRun(
         $run,
@@ -741,6 +744,204 @@ test('a CI repair handoff is attributed to the Coder run that caused it', functi
         ->toBe($handoff->id);
 });
 
+test('vault note written evidence references the responsible AgentRun', function (): void {
+    [,, $run] = taskRoleHandoffFixture('coder');
+    $vaultPath = agentRunActionVaultPath();
+
+    try {
+        $metadata = app(VaultDocumentationService::class)
+            ->writeWorkLog(
+                $run,
+                (string) $run->execution_token,
+                'Work Logs/action.md',
+                "# Durable evidence\n",
+            );
+
+        $action = $run->actions()
+            ->where(
+                'action',
+                AgentRunAction::ACTION_VAULT_NOTE_WRITTEN,
+            )
+            ->sole();
+
+        expect($action->agent_run_id)->toBe($run->id);
+        expect($action->resource_type)
+            ->toBe(AgentRunAction::RESOURCE_AGENT_RUN);
+        expect($action->resource_id)
+            ->toBe($run->id);
+
+        expect(
+            $run->refresh()
+                ->execution_metadata['vault_work_note'],
+        )->toBe($metadata);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+});
+
+test('identical vault note retries create one durable action', function (): void {
+    [,, $run] = taskRoleHandoffFixture('coder');
+    $vaultPath = agentRunActionVaultPath();
+
+    try {
+        $markdown = "# Idempotent\n";
+
+        app(VaultDocumentationService::class)
+            ->writeWorkLog(
+                $run,
+                (string) $run->execution_token,
+                'Work Logs/idempotent.md',
+                $markdown,
+            );
+
+        app(VaultDocumentationService::class)
+            ->writeWorkLog(
+                $run->refresh(),
+                (string) $run->execution_token,
+                'Work Logs/idempotent.md',
+                $markdown,
+            );
+
+        expect(
+            $run->refresh()
+                ->actions()
+                ->where(
+                    'action',
+                    AgentRunAction::ACTION_VAULT_NOTE_WRITTEN,
+                )
+                ->count(),
+        )->toBe(1);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+});
+
+test('a file-written action failure is recovered by an identical vault note retry', function (): void {
+    [,, $run] = taskRoleHandoffFixture('coder');
+    $vaultPath = agentRunActionVaultPath();
+    $notePath = $vaultPath.'/Work Logs/recovery.md';
+    $markdown = "# Recoverable\n\nFilesystem succeeded first.\n";
+
+    AgentRunAction::creating(
+        function (AgentRunAction $action): void {
+            if (
+                $action->action
+                === AgentRunAction::ACTION_VAULT_NOTE_WRITTEN
+            ) {
+                throw new RuntimeException(
+                    'Vault action persistence failed.',
+                );
+            }
+        },
+    );
+
+    try {
+        expect(
+            fn () => app(VaultDocumentationService::class)
+                ->writeWorkLog(
+                    $run,
+                    (string) $run->execution_token,
+                    'Work Logs/recovery.md',
+                    $markdown,
+                ),
+        )->toThrow(
+            RuntimeException::class,
+            'Vault action persistence failed.',
+        );
+    } finally {
+        AgentRunAction::flushEventListeners();
+    }
+
+    try {
+        expect(File::get($notePath))->toBe($markdown);
+
+        $run->refresh();
+
+        expect(
+            $run->execution_metadata,
+        )->toHaveKey('vault_work_note_pending');
+
+        expect(
+            $run->execution_metadata,
+        )->not->toHaveKey('vault_work_note');
+
+        expect(
+            $run->actions()
+                ->where(
+                    'action',
+                    AgentRunAction::ACTION_VAULT_NOTE_WRITTEN,
+                )
+                ->count(),
+        )->toBe(0);
+
+        touch($notePath, 1700000000);
+        clearstatcache(true, $notePath);
+        $mtimeBeforeRetry = filemtime($notePath);
+
+        $result = app(VaultDocumentationService::class)
+            ->writeWorkLog(
+                $run,
+                (string) $run->execution_token,
+                'Work Logs/recovery.md',
+                $markdown,
+            );
+
+        clearstatcache(true, $notePath);
+
+        expect(filemtime($notePath))
+            ->toBe($mtimeBeforeRetry);
+
+        $run->refresh();
+
+        expect(
+            $run->execution_metadata,
+        )->not->toHaveKey('vault_work_note_pending');
+
+        expect(
+            $run->execution_metadata['vault_work_note'],
+        )->toBe($result);
+
+        expect(
+            $run->actions()
+                ->where(
+                    'action',
+                    AgentRunAction::ACTION_VAULT_NOTE_WRITTEN,
+                )
+                ->count(),
+        )->toBe(1);
+
+        expect(File::get($notePath))->toBe($markdown);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+});
+
+/**
+ * Create one isolated configured vault for AgentRun action-evidence tests.
+ */
+function agentRunActionVaultPath(): string
+{
+    $vaultPath = storage_path(
+        'framework/testing/vault-actions/'.Str::uuid(),
+    );
+
+    File::ensureDirectoryExists(
+        $vaultPath.'/Work Logs',
+    );
+
+    File::put(
+        $vaultPath.'/AGENTS.md',
+        'Root governance.',
+    );
+
+    config()->set(
+        'aisf.obsidian_vault_path',
+        $vaultPath,
+    );
+
+    return $vaultPath;
+}
+
 /**
  * Create an active Project Manager AgentRun attached to a pending WorkRequest.
  *
@@ -840,8 +1041,12 @@ function agentRunActionApprovedCandidateFixture(
         app(AgentSessionManager::class)->forSubject($coderAgent, $task),
         'coder',
         [
-            'mode' => 'initial', 'input' => 'Finalize.', 'sources' => [],
-            'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'coder',
+            'mode' => 'initial',
+            'input' => 'Finalize.',
+            'sources' => [],
+            'agent_snapshot' => [],
+            'prompt_snapshot' => [],
+            'role' => 'coder',
         ],
     );
     $coderRun->update(['execution_metadata' => [

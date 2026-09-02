@@ -8,6 +8,7 @@ use App\Mcp\Tools\RecordWorkflowOutcome;
 use App\Mcp\Tools\SaveQaReview;
 use App\Mcp\Tools\SaveTaskPlan;
 use App\Mcp\Tools\SaveTaskResult;
+use App\Mcp\Tools\WriteVaultWorkLog;
 
 return [
     'mcp' => [
@@ -15,6 +16,7 @@ return [
             'include' => [
                 GetTaskContext::class,
                 GetVaultRules::class,
+                WriteVaultWorkLog::class,
                 SaveTaskResult::class,
                 SaveTaskPlan::class,
                 SaveQaReview::class,

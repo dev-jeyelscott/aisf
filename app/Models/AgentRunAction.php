@@ -31,6 +31,8 @@ class AgentRunAction extends Model
 
     public const ACTION_CANDIDATE_FINALIZED = 'candidate_finalized';
 
+    public const ACTION_VAULT_NOTE_WRITTEN = 'vault_note_written';
+
     public const RESOURCE_AGENT_RUN = 'agent_run';
 
     public const RESOURCE_TASK = 'task';

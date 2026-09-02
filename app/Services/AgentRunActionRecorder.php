@@ -45,6 +45,10 @@ class AgentRunActionRecorder
             Task::class,
             AgentRunAction::RESOURCE_TASK,
         ],
+        AgentRunAction::ACTION_VAULT_NOTE_WRITTEN => [
+            AgentRun::class,
+            AgentRunAction::RESOURCE_AGENT_RUN,
+        ],
     ];
 
     /**
