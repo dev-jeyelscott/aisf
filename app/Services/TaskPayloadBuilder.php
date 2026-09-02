@@ -144,7 +144,7 @@ class TaskPayloadBuilder
             'exit_code' => $run->exit_code,
             'harness' => $run->execution_metadata['harness'] ?? null,
             'model' => $run->execution_metadata['model'] ?? null,
-            'started_at' => $run->started_at?->toIso8601String(),
+            'started_at' => $run->started_at->toIso8601String(),
             'finished_at' => $run->finished_at?->toIso8601String(),
         ];
     }

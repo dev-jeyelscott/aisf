@@ -40,7 +40,9 @@ class ProjectAgentController extends Controller
                     ->map(fn ($skill): array => [
                         'id' => $skill->id,
                         'name' => $skill->name,
-                        'position' => (int) $skill->pivot->position,
+                        'position' => (int) $skill
+                            ->getRelation('pivot')
+                            ->getAttribute('position'),
                     ])
                     ->values()
                     ->all(),
