@@ -8,7 +8,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Isolated Task Git worktrees are created under this directory, one per
-    | Task ID. Tests must not share this path with the real application —
+    | Task ID. Tests must not share this path with the real application.
     | Task IDs are not globally unique across the dev database and an
     | in-memory test database, so a concurrent test run using the real path
     | can silently overwrite a live worktree mid-execution.
@@ -22,13 +22,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Obsidian Documentation Vault
+    |--------------------------------------------------------------------------
+    |
+    | Local documentation governance is read from this configured Obsidian
+    | vault. Application code must resolve and validate this path before use.
+    | Tests must override it with an isolated temporary vault.
+    |
+    */
+
+    'obsidian_vault_path' => env('AISF_OBSIDIAN_VAULT_PATH'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Maximum QA <-> Coder Repair Cycles
     |--------------------------------------------------------------------------
     |
     | A Task's repair cycle count is the number of QA "changes_requested"
     | reviews plus CI-failure repair handoffs it has accumulated. Once this
     | limit is reached, the next repair handoff durably fails the Task
-    | (blocked_reason explains why) instead of looping forever — an operator
+    | (blocked_reason explains why) instead of looping forever. An operator
     | must Retry it after intervening.
     |
     */
