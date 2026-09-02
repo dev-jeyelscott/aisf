@@ -501,6 +501,21 @@ test('vault preflight prevents provider resume before the resumed provider turn 
         ->toBe('failed');
 });
 
+test('QA starts a fresh provider conversation for every review attempt', function () {
+    [, , $task] = feature09TaskFixture();
+    $task->update(['last_handoff' => ['to_role' => 'qa']]);
+    $harness = feature09FakeHarness('Review complete.', supportsResume: true);
+    $runner = app(AgentExecutionRunner::class);
+
+    $runner->run($task->refresh());
+    $runner->run($task->refresh());
+
+    expect($harness->startCalls)->toBe(2)
+        ->and($harness->resumeCalls)->toBe(0)
+        ->and($task->agentSessions()->whereHas('projectAgent', fn ($query) => $query->where('role', 'qa'))->sole()->provider_session_id)
+        ->toBeNull();
+});
+
 test('a non-resumable provider keeps using fresh fallback invocations without persisting provider identity', function () {
     [, , $task] = feature09TaskFixture();
     $harness = feature09FakeHarness('Implemented.');

@@ -44,6 +44,7 @@ class AgentExecutionRunner
             ? (string) $session->provider_session_id
             : null;
         $resumingProviderSession = $providerSessionId !== null
+            && $role !== 'qa'
             && $this->harness->canResume($agent);
         [$repositoryPath, $writable] = $this->executionTarget($subject);
         $promptContext = $this->promptComposer->compose($agent, $subject, $repositoryPath, $operatorInstruction);
@@ -93,7 +94,9 @@ class AgentExecutionRunner
                 )
                 : $this->harness->start($agent, $repositoryPath, $prompt, writable: $writable);
 
-            $this->sessionManager->captureProviderSessionId($session, $result->providerSessionId);
+            if ($role !== 'qa') {
+                $this->sessionManager->captureProviderSessionId($session, $result->providerSessionId);
+            }
         } catch (Throwable $exception) {
             $result = new AgentHarnessResult(false, null, null, null, $exception->getMessage());
         }
