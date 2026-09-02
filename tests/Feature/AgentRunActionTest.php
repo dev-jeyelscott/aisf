@@ -397,6 +397,8 @@ test('a Coder can save its result before documentation but cannot hand off to QA
             (string) $run->execution_token,
         );
 
+        $task->refresh();
+
         expect($run->actions()->where('action', AgentRunAction::ACTION_TASK_RESULT_SAVED)->count())->toBe(1);
 
         expect(fn () => app(TaskWorkflowService::class)->handoff(
@@ -407,7 +409,10 @@ test('a Coder can save its result before documentation but cannot hand off to QA
             'coder-qa-'.$run->id,
             [],
             (string) $run->execution_token,
-        ))->toThrow(UnexpectedValueException::class);
+        ))->toThrow(
+            UnexpectedValueException::class,
+            'The AgentRun must write its vault work note before completing this workflow transition.',
+        );
 
         expect($task->handoffs()->count())->toBe(0)
             ->and($run->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(0);

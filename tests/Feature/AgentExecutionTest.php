@@ -283,6 +283,8 @@ test('different Agent roles use separate logical sessions for the same Task', fu
         ->and($harness->resumeCalls)->toBe(0)
         ->and($coderExecution->run->role)->toBe('coder')
         ->and($qaExecution->run->role)->toBe('qa')
+        ->and($harness->prompt)->toContain('write_vault_work_log exactly once')
+        ->and($harness->prompt)->toContain('The vault note is required durable evidence')
         ->and($coderSession->id)->not->toBe($qaSession->id)
         ->and($coderSession->project_agent_id)->not->toBe($qaSession->project_agent_id);
 });

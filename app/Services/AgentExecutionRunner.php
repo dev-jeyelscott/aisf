@@ -185,6 +185,7 @@ class AgentExecutionRunner
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
 Inspect the repository read-only. Your final message is informational and never controls workflow state.
+After inspecting and deciding the outcome, call write_vault_work_log exactly once with a concise Markdown record of the work, evidence, and any blockers before calling any workflow-ending tool.
 For a new request, call save_task_plan, then call handoff_task for every dependency-ready Task using reason "implementation_ready".
 For an existing plan, hand off each newly dependency-ready Task that has not already been handed off.
 If the entire request already exists or is deterministically blocked, call record_workflow_outcome instead of inventing Tasks.
@@ -195,19 +196,20 @@ PROMPT;
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
 You have read-only access. Use get_task_context and review the exact candidate_tree_sha. If you find a code-level defect, call save_qa_review with "changes_requested", then call handoff_task to Coder with reason "changes_requested". If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, call record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence; do not create a Coder repair handoff. Otherwise, call save_qa_review with "approved", then call handoff_task to Coder with reason "approved". Your final message is informational only. Do not edit or commit.
+Before save_qa_review, handoff_task, or record_workflow_outcome, call write_vault_work_log exactly once with a concise Markdown record of the review, evidence, and any blockers. The vault note is required durable evidence; do not finish the turn until it succeeds.
 PROMPT;
         }
 
         if ($mode === 'approved') {
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
-This is approved finalization mode. Do not modify the implementation. Commit the approved candidate when candidate_kind is "changes", then call finalize_task. For "no_change", call finalize_task without a commit. Your final message is informational only.
+This is approved finalization mode. Do not modify the implementation. Call write_vault_work_log exactly once with a concise Markdown record of the finalization evidence before calling finalize_task. Commit the approved candidate when candidate_kind is "changes", then call finalize_task. For "no_change", call finalize_task without a commit. Your final message is informational only.
 PROMPT;
         }
 
         return <<<PROMPT
 DURABLE WORKFLOW CONTRACT
-Coder mode: {$mode}. Use get_task_context, perform the required implementation or repair, test it, call save_task_result, then hand off the new candidate to QA. Do not commit before QA approval. Your final message is informational only. Use record_workflow_outcome only for a deterministic blocker.
+Coder mode: {$mode}. Use get_task_context, perform the required implementation or repair, test it, call save_task_result, then call write_vault_work_log exactly once with a concise Markdown record of the work, evidence, and any blockers before handing off the new candidate to QA. Do not commit before QA approval. Your final message is informational only. Use record_workflow_outcome only for a deterministic blocker, after the vault note succeeds.
 PROMPT;
     }
 }
