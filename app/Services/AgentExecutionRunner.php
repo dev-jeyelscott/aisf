@@ -52,7 +52,8 @@ class AgentExecutionRunner
         $prompt = $promptContext['prompt']
             ."\n\n".$this->contractSection($subject, $role, $mode)
             ."\n\n".$this->projectVerificationContractSection()
-            ."\n\n".$this->vaultDocumentationContractSection();
+            ."\n\n".$this->vaultDocumentationContractSection()
+            ."\n\nACTIVE RUN AUTHORIZATION\nAgent run token: {$executionToken}";
 
         if ($subject instanceof Task) {
             $prompt .= "\n\nDURABLE TASK CONTEXT\n".json_encode($this->taskContextBuilder->forTask($subject), JSON_THROW_ON_ERROR);

@@ -6,6 +6,7 @@ use App\Models\AgentRun;
 use App\Models\Project;
 use App\Models\ProjectVerificationRun;
 use App\Models\Task;
+use App\Models\WorkRequest;
 use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Facades\DB;
@@ -197,8 +198,13 @@ class ProjectVerificationService
         $task = $session?->task;
         $workRequest = $session?->workRequest;
 
-        $project = $task?->workRequest?->project
-            ?? $workRequest?->project;
+        $project = null;
+
+        if ($task instanceof Task) {
+            $project = $task->workRequest->project;
+        } elseif ($workRequest instanceof WorkRequest) {
+            $project = $workRequest->project;
+        }
 
         if (
             ! $viewer->exists
@@ -274,13 +280,25 @@ class ProjectVerificationService
     /**
      * Resolve one exact operator-approved Project profile and defensively validate its persisted shape.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     driver: 'native'|'docker_compose_exec',
+     *     command: list<string>,
+     *     timeout: int,
+     *     compose_file?: string,
+     *     compose_project?: string,
+     *     service?: string,
+     *     user?: string
+     * }
      */
     private function profileDefinition(
         Project $project,
         string $profileName,
     ): array {
-        $profiles = $project->verification_profiles ?? [];
+        $profiles = $project->getAttribute('verification_profiles');
+
+        if ($profiles === null) {
+            $profiles = [];
+        }
 
         if (
             ! is_array($profiles)
@@ -292,10 +310,10 @@ class ProjectVerificationService
             );
         }
 
-        $profile = $profiles[$profileName];
-        $driver = $profile['driver'] ?? null;
-        $command = $profile['command'] ?? null;
-        $timeout = $profile['timeout'] ?? null;
+        $rawProfile = $profiles[$profileName];
+        $driver = $rawProfile['driver'] ?? null;
+        $command = $rawProfile['command'] ?? null;
+        $timeout = $rawProfile['timeout'] ?? null;
 
         if (
             ! is_string($driver)
@@ -319,6 +337,8 @@ class ProjectVerificationService
             );
         }
 
+        $normalizedCommand = [];
+
         foreach ($command as $argument) {
             if (
                 ! is_string($argument)
@@ -330,11 +350,13 @@ class ProjectVerificationService
                     'The requested Project verification command is malformed.',
                 );
             }
+
+            $normalizedCommand[] = $argument;
         }
 
         $executable = strtolower(
             basename(
-                str_replace('\\', '/', $command[0]),
+                str_replace('\\', '/', $normalizedCommand[0]),
             ),
         );
 
@@ -358,26 +380,43 @@ class ProjectVerificationService
             );
         }
 
-        if ($driver === 'docker_compose_exec') {
-            foreach ([
-                'compose_file',
-                'compose_project',
-                'service',
-                'user',
-            ] as $requiredKey) {
-                if (
-                    ! isset($profile[$requiredKey])
-                    || ! is_string($profile[$requiredKey])
-                    || trim($profile[$requiredKey]) === ''
-                ) {
-                    throw new UnexpectedValueException(
-                        'The Docker verification profile is missing required trusted infrastructure configuration.',
-                    );
-                }
-            }
+        if ($driver === 'native') {
+            return [
+                'driver' => 'native',
+                'command' => $normalizedCommand,
+                'timeout' => $timeout,
+            ];
         }
 
-        return $profile;
+        $composeFile = $rawProfile['compose_file'] ?? null;
+        $composeProject = $rawProfile['compose_project'] ?? null;
+        $service = $rawProfile['service'] ?? null;
+        $user = $rawProfile['user'] ?? null;
+
+        if (
+            ! is_string($composeFile)
+            || trim($composeFile) === ''
+            || ! is_string($composeProject)
+            || trim($composeProject) === ''
+            || ! is_string($service)
+            || trim($service) === ''
+            || ! is_string($user)
+            || trim($user) === ''
+        ) {
+            throw new UnexpectedValueException(
+                'The Docker verification profile is missing required trusted infrastructure configuration.',
+            );
+        }
+
+        return [
+            'driver' => 'docker_compose_exec',
+            'command' => $normalizedCommand,
+            'timeout' => $timeout,
+            'compose_file' => trim($composeFile),
+            'compose_project' => trim($composeProject),
+            'service' => trim($service),
+            'user' => trim($user),
+        ];
     }
 
     /**
@@ -390,7 +429,15 @@ class ProjectVerificationService
      *     target_type: string,
      *     candidate_tree_sha: string|null
      * } $context
-     * @param  array<string, mixed>  $profile
+     * @param array{
+     *     driver: 'native'|'docker_compose_exec',
+     *     command: list<string>,
+     *     timeout: int,
+     *     compose_file?: string,
+     *     compose_project?: string,
+     *     service?: string,
+     *     user?: string
+     * } $profile
      * @return array{0: ProjectVerificationRun, 1: bool}
      */
     private function reserveAttempt(
@@ -433,14 +480,22 @@ class ProjectVerificationService
                 ->first();
 
             if ($existing instanceof ProjectVerificationRun) {
+                $existingCommand = $existing->getAttribute('command');
+
+                if (! is_array($existingCommand)) {
+                    throw new UnexpectedValueException(
+                        'The persisted verification command evidence is malformed.',
+                    );
+                }
+
                 if (
                     $existing->profile !== $profileName
                     || $existing->driver !== $profile['driver']
                     || $existing->target_type !== $context['target_type']
                     || $existing->candidate_tree_sha
                         !== $context['candidate_tree_sha']
-                    || $existing->command
-                        !== array_values($profile['command'])
+                    || array_values($existingCommand)
+                        !== $profile['command']
                 ) {
                     throw new UnexpectedValueException(
                         'The verification idempotency key already belongs to a different logical request.',
@@ -457,7 +512,7 @@ class ProjectVerificationService
                 'profile' => $profileName,
                 'driver' => $profile['driver'],
                 'target_type' => $context['target_type'],
-                'command' => array_values($profile['command']),
+                'command' => $profile['command'],
                 'candidate_tree_sha' => $context['candidate_tree_sha'],
                 'status' => ProjectVerificationRun::STATUS_RUNNING,
                 'started_at' => now(),
@@ -1124,12 +1179,8 @@ class ProjectVerificationService
         $environment = [];
         $currentEnvironment = getenv();
 
-        if (is_array($currentEnvironment)) {
-            foreach (array_keys($currentEnvironment) as $name) {
-                if (is_string($name)) {
-                    $environment[$name] = false;
-                }
-            }
+        foreach (array_keys($currentEnvironment) as $name) {
+            $environment[$name] = false;
         }
 
         foreach ([
