@@ -194,7 +194,7 @@ class AgentHarness
             $result = Process::path($repositoryPath)
                 ->env($this->runtimeEnvironment->resolve())
                 ->input($prompt)
-                ->forever()
+                ->timeout((int) config('aisf.agent_turn_timeout', 3300))
                 ->run($command);
 
             if (! $supportsResume) {
@@ -396,7 +396,7 @@ class AgentHarness
         $result = Process::path($repositoryPath)
             ->env($this->runtimeEnvironment->resolve())
             ->input($prompt)
-            ->forever()
+            ->timeout((int) config('aisf.agent_turn_timeout', 3300))
             ->run($command);
 
         try {

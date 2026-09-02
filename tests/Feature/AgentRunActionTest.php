@@ -876,6 +876,7 @@ test('finalizing an approved candidate records the completed Task against the re
         ->once()
         ->andReturn([
             'passed' => true,
+            'environment' => false,
             'output' => '',
         ])
         ->shouldReceive('pushAndOpenPullRequest')
@@ -923,6 +924,7 @@ test('a CI repair handoff is attributed to the Coder run that caused it', functi
         ->once()
         ->andReturn([
             'passed' => false,
+            'environment' => false,
             'output' => 'FAILED: focused regression test',
         ])
         ->shouldReceive('resetToBasePreservingChanges')

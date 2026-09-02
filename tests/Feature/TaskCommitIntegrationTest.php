@@ -15,6 +15,7 @@ use App\Services\AgentTurnExecution;
 use App\Services\AgentTurnReconciler;
 use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
+use App\Services\RepairCycleGuard;
 use App\Services\TaskCandidateFingerprint;
 use App\Services\TaskCommitIntegrator;
 use App\Services\TaskWorkflowService;
@@ -206,7 +207,7 @@ test('a verified commit that passes CI completes the Task and opens a pull reque
     mock(TaskWorktreeManager::class)
         ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
         ->shouldReceive('verifyHeadMatches')->once()
-        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'output' => ''])
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'environment' => false, 'output' => ''])
         ->shouldReceive('pushAndOpenPullRequest')->once()->andReturn(['commit_sha' => 'commit-sha-1', 'pull_request_url' => 'https://github.com/org/repo/pull/1']);
     mock(TaskCandidateFingerprint::class)
         ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
@@ -243,7 +244,7 @@ test('an approved no-change candidate completes without a commit or pull request
             'tree_sha' => 'candidate-1', 'base_tree_sha' => 'candidate-1', 'kind' => 'no_change',
         ]);
     mock(TaskWorktreeManager::class)
-        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'output' => '']);
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => true, 'environment' => false, 'output' => '']);
 
     app(TaskCommitIntegrator::class)->finalize(
         $task, $coderRun, null, 'No repository change is required.', $coderRun->execution_token,
@@ -260,7 +261,7 @@ test('a commit that fails CI hands the Task back to the Coder instead of opening
     mock(TaskWorktreeManager::class)
         ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
         ->shouldReceive('verifyHeadMatches')->once()
-        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'output' => 'FAILED: some test'])
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'environment' => false, 'output' => 'FAILED: some test'])
         ->shouldReceive('resetToBasePreservingChanges')->once();
     mock(TaskCandidateFingerprint::class)
         ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
@@ -276,6 +277,33 @@ test('a commit that fails CI hands the Task back to the Coder instead of opening
         ->and($fresh->pull_request_url)->toBeNull();
 });
 
+test('an environment-only finalization CI failure blocks the Task instead of consuming a repair cycle', function () {
+    [, $task, $coderRun] = taskWithApprovedCandidate();
+    mock(TaskWorktreeManager::class)
+        ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
+        ->shouldReceive('verifyHeadMatches')->once()
+        ->shouldReceive('runCiCheck')->once()->andReturn([
+            'passed' => false,
+            'environment' => true,
+            'output' => 'InvalidArgumentException: Database connection [default] not configured.',
+        ])
+        ->shouldNotReceive('resetToBasePreservingChanges');
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
+        ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');
+
+    app(TaskCommitIntegrator::class)->finalize($task, $coderRun, 'commit-sha-1', 'Implemented the change.', $coderRun->execution_token);
+
+    $fresh = $task->refresh();
+    expect($fresh->status)->toBe('failed')
+        ->and($fresh->outcome)->toBe('blocked')
+        ->and($fresh->blocked_reason)->toContain('unavailable or misconfigured')
+        ->and($fresh->blocked_reason)->toContain('Database connection [default] not configured')
+        ->and($fresh->candidate_tree_sha)->toBe('candidate-1')
+        ->and($fresh->handoffs()->where('reason', 'ci_failed')->count())->toBe(0)
+        ->and(app(RepairCycleGuard::class)->repairCycleCount($fresh))->toBe(0);
+});
+
 test('CI repair-limit failure remains terminal through reconciliation and cannot requeue the Coder', function () {
     config(['aisf.max_repair_cycles' => 0]);
     Queue::fake([ProcessAgentExecution::class]);
@@ -284,7 +312,7 @@ test('CI repair-limit failure remains terminal through reconciliation and cannot
     mock(TaskWorktreeManager::class)
         ->shouldReceive('verifyCommitExists')->once()->andReturn('commit-sha-1')
         ->shouldReceive('verifyHeadMatches')->once()
-        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'output' => 'FAILED']);
+        ->shouldReceive('runCiCheck')->once()->andReturn(['passed' => false, 'environment' => false, 'output' => 'FAILED']);
     mock(TaskCandidateFingerprint::class)
         ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1')
         ->shouldReceive('commitTreeSha')->once()->andReturn('candidate-1');

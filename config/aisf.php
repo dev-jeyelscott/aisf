@@ -121,4 +121,23 @@ return [
 
     'agent_runtime_home' => env('AISF_AGENT_HOME'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Agent Turn Timeout
+    |--------------------------------------------------------------------------
+    |
+    | The maximum number of seconds a single Codex/Claude provider turn may
+    | run before AISF treats it as an infrastructure failure. Without this,
+    | a dead or hung provider/MCP subprocess left the AgentRun permanently
+    | stuck in "running" instead of failing cleanly through the existing
+    | durable reconciliation and repair path. Keep this comfortably below
+    | the queue connection's retry_after (queue.php / DB_QUEUE_RETRY_AFTER)
+    | so a turn always finishes reconciling before the queue driver would
+    | otherwise consider the job's reservation abandoned and release it
+    | for a second, doomed attempt.
+    |
+    */
+
+    'agent_turn_timeout' => max(60, (int) env('AISF_AGENT_TURN_TIMEOUT', 3300)),
+
 ];

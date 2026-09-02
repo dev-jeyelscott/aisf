@@ -5,6 +5,36 @@ use App\Services\AgentHarness;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
 
+it('bounds Codex and Claude provider turns to the configured agent turn timeout instead of running forever', function () {
+    config()->set('aisf.agent_turn_timeout', 1234);
+    $timeouts = [];
+
+    Process::fake(function (PendingProcess $process) use (&$timeouts) {
+        if (in_array($process->command, [['codex', 'exec', '--help'], ['claude', '--help']], true)) {
+            return Process::result(output: 'Usage: codex exec [OPTIONS]');
+        }
+
+        $timeouts[] = $process->timeout;
+
+        if (($process->command[0] ?? null) === 'codex') {
+            return Process::result(output: '{"summary":"ok"}');
+        }
+
+        return Process::result(output: json_encode([
+            'type' => 'result',
+            'session_id' => 'session-1',
+            'result' => 'ok',
+        ], JSON_THROW_ON_ERROR));
+    });
+
+    Process::preventStrayProcesses();
+
+    app(AgentHarness::class)->start(new ProjectAgent(['harness' => 'codex']), sys_get_temp_dir(), 'Inspect the repository.');
+    app(AgentHarness::class)->start(new ProjectAgent(['harness' => 'claude']), sys_get_temp_dir(), 'Inspect the repository.');
+
+    expect($timeouts)->toBe([1234, 1234]);
+});
+
 it('applies the resolved runtime environment to Codex initial, resume, and resume-probe executions', function () {
     config()->set('aisf.agent_runtime_path', '/resolved/bin:/usr/bin');
     config()->set('aisf.agent_runtime_home', '/resolved/home');

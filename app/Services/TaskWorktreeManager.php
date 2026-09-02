@@ -226,7 +226,7 @@ class TaskWorktreeManager
     /**
      * Run the Project's CI check script inside the Task worktree so a failing pull request is never opened.
      *
-     * @return array{passed: bool, output: string}
+     * @return array{passed: bool, environment: bool, output: string}
      */
     public function runCiCheck(Task $task): array
     {
@@ -237,13 +237,42 @@ class TaskWorktreeManager
         }
 
         $result = $this->run($worktreePath, ['composer', 'ci:check'], timeout: 900, idleTimeout: 900);
+        $output = $result !== null
+            ? trim($result->output()."\n".$result->errorOutput())
+            : 'Unable to run the Project CI check script.';
 
         return [
             'passed' => $result !== null && $result->successful(),
-            'output' => $result !== null
-                ? trim($result->output()."\n".$result->errorOutput())
-                : 'Unable to run the Project CI check script.',
+            'environment' => $result === null
+                || in_array($result->exitCode(), [126, 127], true)
+                || $this->looksLikeEnvironmentFailure($output),
+            'output' => $output,
         ];
+    }
+
+    /**
+     * Distinguish a boot-time/infrastructure CI failure (missing tooling, unconfigured database, an
+     * uninstalled dependency) from a genuine code-level test, lint, type, or build defect. A worktree
+     * only checks out tracked files and a copy of the seeded `.env`/dependencies, so it can legitimately
+     * fail to boot for reasons that have nothing to do with the candidate's own code.
+     */
+    private function looksLikeEnvironmentFailure(string $output): bool
+    {
+        foreach ([
+            'Database connection [',
+            'could not find driver',
+            'vendor/autoload.php',
+            'Class "Composer\\Autoload\\ClassLoader" not found',
+            'unable to open database file',
+            'command not found',
+            'No such file or directory',
+        ] as $marker) {
+            if (Str::contains($output, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function verifyHeadMatches(Task $task, string $expectedSha): void

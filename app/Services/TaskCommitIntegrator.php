@@ -85,7 +85,9 @@ class TaskCommitIntegrator
             $ci = $this->worktreeManager->runCiCheck($task);
 
             if (! $ci['passed']) {
-                $this->repair($task, $coderRun, $ci['output']);
+                $ci['environment']
+                    ? $this->blockOnEnvironmentFailure($task, $coderRun, $ci['output'])
+                    : $this->repair($task, $coderRun, $ci['output']);
 
                 return;
             }
@@ -113,7 +115,9 @@ class TaskCommitIntegrator
         $ci = $this->worktreeManager->runCiCheck($task);
 
         if (! $ci['passed']) {
-            $this->repair($task, $coderRun, $ci['output']);
+            $ci['environment']
+                ? $this->blockOnEnvironmentFailure($task, $coderRun, $ci['output'])
+                : $this->repair($task, $coderRun, $ci['output']);
 
             return;
         }
@@ -180,6 +184,41 @@ class TaskCommitIntegrator
                     $workRequest,
                 );
             }
+        }, attempts: 3);
+    }
+
+    /**
+     * Block the Task on an unavailable or misconfigured finalization environment instead of treating
+     * it as a code-level defect. Unlike `repair()`, this preserves the approved candidate and its
+     * repair-cycle budget: the candidate itself was never at fault, only the CI environment was.
+     */
+    private function blockOnEnvironmentFailure(
+        Task $task,
+        AgentRun $coderRun,
+        string $ciOutput,
+    ): void {
+        DB::transaction(function () use ($task, $coderRun, $ciOutput): void {
+            $locked = Task::query()
+                ->lockForUpdate()
+                ->findOrFail($task->id);
+
+            if ($locked->status !== 'running') {
+                return;
+            }
+
+            $locked->update([
+                'status' => 'failed',
+                'outcome' => 'blocked',
+                'blocked_reason' => 'The finalization CI check failed because of an unavailable or misconfigured '
+                    .'verification environment, not a code-level defect. The approved candidate was preserved. '
+                    .'Diagnostic: '.Str::limit($ciOutput, 2000, ''),
+            ]);
+
+            $this->actionRecorder->record(
+                $coderRun,
+                AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED,
+                $locked,
+            );
         }, attempts: 3);
     }
 
