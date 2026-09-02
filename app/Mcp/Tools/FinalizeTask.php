@@ -7,6 +7,7 @@ use App\Models\Task;
 use App\Services\TaskCommitIntegrator;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\JsonSchema\Types\Type;
+use Illuminate\Support\Str;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
@@ -44,6 +45,9 @@ class FinalizeTask extends Tool
             'outcome' => $task->outcome,
             'commit_sha' => $task->commit_sha,
             'pull_request_url' => $task->pull_request_url,
+            'blocked_reason' => filled($task->blocked_reason)
+                ? Str::limit((string) $task->blocked_reason, 2000, '')
+                : null,
         ]);
     }
 
