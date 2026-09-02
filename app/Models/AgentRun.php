@@ -114,4 +114,14 @@ class AgentRun extends Model
     {
         return $this->hasMany(TaskHandoff::class, 'from_agent_run_id');
     }
+
+    /**
+     * Return host-controlled verification attempts requested by this invocation.
+     *
+     * @return HasMany<ProjectVerificationRun, $this>
+     */
+    public function verificationRuns(): HasMany
+    {
+        return $this->hasMany(ProjectVerificationRun::class);
+    }
 }

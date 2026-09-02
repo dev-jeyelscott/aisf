@@ -8,7 +8,20 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['title', 'description', 'path', 'enabled', 'merge_policy', 'github_repository', 'github_webhook_secret', 'github_ready_label', 'notion_database_id', 'notion_integration_token', 'notion_ready_status'])]
+#[Fillable([
+    'title',
+    'description',
+    'path',
+    'enabled',
+    'merge_policy',
+    'github_repository',
+    'github_webhook_secret',
+    'github_ready_label',
+    'notion_database_id',
+    'notion_integration_token',
+    'notion_ready_status',
+    'verification_profiles',
+])]
 class Project extends Model
 {
     /** @use HasFactory<ProjectFactory> */
@@ -30,6 +43,7 @@ class Project extends Model
             'enabled' => 'boolean',
             'github_webhook_secret' => 'encrypted',
             'notion_integration_token' => 'encrypted',
+            'verification_profiles' => 'array',
         ];
     }
 

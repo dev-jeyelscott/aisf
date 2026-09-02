@@ -35,6 +35,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Project Verification
+    |--------------------------------------------------------------------------
+    |
+    | Docker verification definitions must live outside managed Project
+    | repositories so an Agent cannot mutate infrastructure policy through
+    | repository writes. Native verification remains an explicit trusted-host
+    | escape hatch and is disabled by default.
+    |
+    */
+
+    'verification_definition_path' => env(
+        'AISF_VERIFICATION_DEFINITION_PATH',
+        storage_path('app/verification-definitions'),
+    ),
+
+    'allow_trusted_native_verification' => filter_var(
+        env('AISF_ALLOW_TRUSTED_NATIVE_VERIFICATION', false),
+        FILTER_VALIDATE_BOOL,
+    ),
+
+    'verification_max_timeout' => max(
+        1,
+        (int) env('AISF_VERIFICATION_MAX_TIMEOUT', 1800),
+    ),
+
+    'verification_output_limit' => max(
+        1000,
+        (int) env('AISF_VERIFICATION_OUTPUT_LIMIT', 12000),
+    ),
+
+    /*
+    |--------------------------------------------------------------------------
     | Maximum QA <-> Coder Repair Cycles
     |--------------------------------------------------------------------------
     |

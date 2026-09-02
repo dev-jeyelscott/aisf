@@ -51,8 +51,8 @@ class AgentExecutionRunner
         $executionToken = Str::random(64);
         $prompt = $promptContext['prompt']
             ."\n\n".$this->contractSection($subject, $role, $mode)
-            ."\n\n".$this->vaultDocumentationContractSection()
-            ."\n\nACTIVE RUN AUTHORIZATION\nAgent run token: {$executionToken}";
+            ."\n\n".$this->projectVerificationContractSection()
+            ."\n\n".$this->vaultDocumentationContractSection();
 
         if ($subject instanceof Task) {
             $prompt .= "\n\nDURABLE TASK CONTEXT\n".json_encode($this->taskContextBuilder->forTask($subject), JSON_THROW_ON_ERROR);
@@ -229,6 +229,24 @@ Coder mode: {$mode}. Use get_task_context, perform the required implementation o
 The successful workflow-ending action is handoff_task to QA for the new candidate. Do not commit before QA approval.
 Use record_workflow_outcome only for a deterministic blocker that prevents normal completion.
 Your final message is informational only.
+PROMPT;
+    }
+
+    /**
+     * Build one role-agnostic host verification contract inherited by every Agent turn.
+     */
+    private function projectVerificationContractSection(): string
+    {
+        return <<<'PROMPT'
+HOST-CONTROLLED PROJECT VERIFICATION
+When required verification depends on Docker, databases, Redis, browsers, or host infrastructure that your provider sandbox cannot access, use run_project_verification with an operator-approved profile and a unique idempotency key for that logical attempt.
+Never invoke Docker directly as a workaround. Never invent a host command, service name, container name, Docker option, environment variable, mount, or shell command.
+A repeated call for the same logical attempt must reuse its idempotency key. A genuinely new verification attempt after relevant work changes must use a new idempotency key.
+Treat "passed" as successful verification and "failed" as an executed verification whose checks failed.
+Treat "environment_unavailable" as external verification infrastructure evidence, not automatically as a code defect.
+Treat "timed_out" separately and determine from the evidence whether the timeout indicates code behavior or external infrastructure.
+Treat "stale_candidate" as unusable evidence because the durable candidate identity changed.
+QA verification of a Task must apply to the exact candidate_tree_sha being reviewed. Do not approve a different mutable checkout.
 PROMPT;
     }
 

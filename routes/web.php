@@ -5,6 +5,7 @@ use App\Http\Controllers\GithubWebhookController;
 use App\Http\Controllers\ProjectAgentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectSkillController;
+use App\Http\Controllers\ProjectVerificationController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\WorkRequestController;
 use Illuminate\Support\Facades\Route;
@@ -23,7 +24,17 @@ Route::post('projects/{project}/tasks/{task}/run', [TaskController::class, 'run'
 Route::post('projects/{project}/tasks/{task}/retry', [TaskController::class, 'retry'])->name('projects.tasks.retry');
 Route::post('webhooks/github/{project}', GithubWebhookController::class)->name('webhooks.github');
 
-Route::middleware(['auth', 'verified'])->group(function () {
+Route::middleware(['auth', 'verified'])->group(function (): void {
+    Route::get(
+        'projects/{project}/verification',
+        [ProjectVerificationController::class, 'edit'],
+    )->name('projects.verification.edit');
+
+    Route::put(
+        'projects/{project}/verification',
+        [ProjectVerificationController::class, 'update'],
+    )->name('projects.verification.update');
+
     Route::inertia('dashboard', 'dashboard')->name('dashboard');
 });
 
