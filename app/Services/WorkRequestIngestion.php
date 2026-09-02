@@ -83,6 +83,10 @@ class WorkRequestIngestion
 
     private function findExisting(Project $project, string $sourceType, ?string $externalId): ?WorkRequest
     {
+        if ($externalId === null) {
+            return null;
+        }
+
         return WorkRequest::query()
             ->where('project_id', $project->id)
             ->where('source_type', $sourceType)

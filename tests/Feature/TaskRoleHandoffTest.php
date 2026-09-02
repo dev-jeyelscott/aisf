@@ -53,6 +53,21 @@ test('submission provisions all role sessions and dispatches only the Project Ma
     Queue::assertPushed(ProcessAgentExecution::class, fn (ProcessAgentExecution $job) => $job->subject->is($workRequest));
 });
 
+test('manual submissions are not deduplicated by their null external identity', function () {
+    Queue::fake();
+    $project = Project::factory()->create();
+    app(ProjectAgentProvisioner::class)->ensureFor($project);
+
+    $this->post(route('projects.work-requests.store', $project), ['prompt' => 'First change.'])
+        ->assertSessionHasNoErrors();
+    $this->post(route('projects.work-requests.store', $project), ['prompt' => 'Second change.'])
+        ->assertSessionHasNoErrors();
+
+    expect(WorkRequest::query()->where('project_id', $project->id)->pluck('prompt')->all())
+        ->toBe(['First change.', 'Second change.']);
+    Queue::assertPushed(ProcessAgentExecution::class, 1);
+});
+
 test('submission rejects a Project without every enabled required role', function () {
     Queue::fake();
     $project = Project::factory()->create();
