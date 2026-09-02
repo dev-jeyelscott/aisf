@@ -525,6 +525,8 @@ class VaultDocumentationService
 
     /**
      * Determine whether a filesystem path currently exists or represents a symbolic link.
+     *
+     * @phpstan-impure
      */
     private function pathExistsOrIsSymbolicLink(string $path): bool
     {

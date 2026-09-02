@@ -11,11 +11,18 @@ use UnexpectedValueException;
 
 class WorkflowOutcomeService
 {
+    /**
+     * Initialize workflow outcome persistence with durable action and documentation guards.
+     */
     public function __construct(
         private readonly AgentRunActionRecorder $actionRecorder,
     ) {}
 
-    /** @param list<string> $evidence */
+    /**
+     * Record one authorized terminal workflow outcome only after required Agent documentation exists.
+     *
+     * @param  list<string>  $evidence
+     */
     public function record(
         AgentRun $run,
         Task|WorkRequest $subject,
@@ -59,6 +66,8 @@ class WorkflowOutcomeService
             if ($locked->status !== 'running') {
                 throw new UnexpectedValueException('The workflow subject is no longer running.');
             }
+
+            $this->actionRecorder->assertVaultNoteWritten($run);
 
             if ($locked instanceof WorkRequest) {
                 $locked->update([

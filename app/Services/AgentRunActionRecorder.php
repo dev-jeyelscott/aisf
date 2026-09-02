@@ -52,6 +52,41 @@ class AgentRunActionRecorder
     ];
 
     /**
+     * Determine whether the exact AgentRun owns one valid successful vault-note action.
+     */
+    public function hasVaultNoteWritten(AgentRun $run): bool
+    {
+        if (! $run->exists || $run->getKey() === null) {
+            return false;
+        }
+
+        $actions = $run->actions()
+            ->where('action', AgentRunAction::ACTION_VAULT_NOTE_WRITTEN)
+            ->get();
+
+        if ($actions->count() !== 1) {
+            return false;
+        }
+
+        $action = $actions->sole();
+
+        return $action->resource_type === AgentRunAction::RESOURCE_AGENT_RUN
+            && $action->resource_id === (int) $run->getKey();
+    }
+
+    /**
+     * Require exact durable vault-note evidence before a workflow-ending transition.
+     */
+    public function assertVaultNoteWritten(AgentRun $run): void
+    {
+        if (! $this->hasVaultNoteWritten($run)) {
+            throw new UnexpectedValueException(
+                'The AgentRun must write its vault work note before completing this workflow transition.',
+            );
+        }
+    }
+
+    /**
      * Record one successfully persisted durable resource against the exact responsible AgentRun.
      */
     public function record(

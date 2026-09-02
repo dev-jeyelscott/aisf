@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\AgentRun;
+use App\Models\AgentRunAction;
 use App\Models\Project;
 use App\Models\Task;
+use App\Services\AgentRunActionRecorder;
 use App\Services\AgentSessionManager;
 use App\Services\ProjectAgentProvisioner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -29,8 +31,8 @@ pest()->extend(TestCase::class)
 |--------------------------------------------------------------------------
 |
 | When you're writing tests, you often need to check that values meet certain conditions. The
-| "expect()" function gives you access to a set of "expectations" methods that you can use
-| to assert different things. Of course, you may extend the Expectation API at any time.
+| Pest framework gives you access to a set of "expectations" methods that you can use to assert
+| different things. Of course, you may extend the Expectation API at any time.
 |
 */
 
@@ -50,6 +52,8 @@ expect()->extend('toBeOne', function () {
 */
 
 /**
+ * Build one active role-specific Task AgentRun for workflow feature tests.
+ *
  * @return array{0: Project, 1: Task, 2: AgentRun}
  */
 function taskRoleHandoffFixture(string $role): array
@@ -78,4 +82,24 @@ function taskRoleHandoffFixture(string $role): array
     ]);
 
     return [$project, $task, $run];
+}
+
+/**
+ * Record exact vault-note action evidence for tests that do not exercise filesystem writing itself.
+ */
+function markAgentRunDocumented(AgentRun $run): void
+{
+    if (
+        $run->actions()
+            ->where('action', AgentRunAction::ACTION_VAULT_NOTE_WRITTEN)
+            ->exists()
+    ) {
+        return;
+    }
+
+    app(AgentRunActionRecorder::class)->record(
+        $run,
+        AgentRunAction::ACTION_VAULT_NOTE_WRITTEN,
+        $run,
+    );
 }

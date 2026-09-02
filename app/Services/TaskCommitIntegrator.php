@@ -69,6 +69,8 @@ class TaskCommitIntegrator
             );
         }
 
+        $this->actionRecorder->assertVaultNoteWritten($coderRun);
+
         if ($task->candidate_kind === 'no_change') {
             if (filled($commitSha)) {
                 throw new UnexpectedValueException('A no-change candidate must not create a commit.');

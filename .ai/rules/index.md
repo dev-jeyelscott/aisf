@@ -6,7 +6,7 @@ Before planning or editing, find the row whose globs match the file's path and r
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | app/Mcp/Tools/*.php,app/Services/TaskContextBuilder.php,app/Services/TaskWorkflowService.php,app/Models/TaskHandoff.php                                                   | .ai/rules/agent-handoffs.md        |
 | app/Services/{AgentExecutionRunner,AgentTurnReconciler}.php,app/Jobs/ProcessAgentExecution.php                                                                            | .ai/rules/app-services-jobs.md     |
-| app/Services/AgentHarness.php, app/Services/WorkflowDispatcher.php                                                                                                        | .ai/rules/app-services.md          |
+| app/Services/AgentHarness.php, app/Services/WorkflowDispatcher.php, app/Services/AgentExecutionRunner.php                                                                 | .ai/rules/app-services.md          |
 | app/Console/Commands/*.php                                                                                                                                                | .ai/rules/commands.md              |
 | app/Jobs/*.php,app/Services/AgentExecutionRunner.php,app/Console/Commands/DispatchWorkflow.php                                                                            | .ai/rules/console-commands.md      |
 | app/Http/Controllers/TaskController.php                                                                                                                                   | .ai/rules/controllers.md           |

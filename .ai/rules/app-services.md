@@ -2,6 +2,7 @@
 paths:
     - app/Services/AgentHarness.php
     - app/Services/WorkflowDispatcher.php
+    - app/Services/AgentExecutionRunner.php
 ---
 
 # App Services
@@ -19,3 +20,7 @@ Before dispatching eligible pending or waiting Tasks, restore last_handoff from 
 ## Keep Codex resume flags separate from initial execution flags
 
 Codex `exec resume` has a narrower option set than initial `exec` (notably no `--sandbox`, `--color`, or `--output-schema` in the installed CLI). Build resume commands separately and test against the installed CLI help; otherwise retries fail immediately with exit code 2 before the agent starts.
+
+## QA must block environment-only verification failures
+
+QA must use changes_requested only for actual code-level defects. If the candidate is code-correct but required tests/builds cannot run because the external environment is unavailable or misconfigured, QA must record a blocked Task outcome with evidence and must not hand off a Coder repair.

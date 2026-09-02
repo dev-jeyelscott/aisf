@@ -173,6 +173,32 @@ test('a Coder may not finalize a commit without a current QA approval', function
         ->toThrow(UnexpectedValueException::class);
 });
 
+test('an approved candidate cannot finalize before the finalizer writes its vault note', function () {
+    [, $task, $coderRun] = taskWithApprovedCandidate('candidate-1', false);
+
+    mock(TaskCandidateFingerprint::class)
+        ->shouldReceive('currentTreeSha')->once()->andReturn('candidate-1');
+    $worktreeManager = mock(TaskWorktreeManager::class);
+    $worktreeManager->shouldNotReceive('verifyCommitExists');
+    $worktreeManager->shouldNotReceive('verifyHeadMatches');
+    $worktreeManager->shouldNotReceive('runCiCheck');
+    $worktreeManager->shouldNotReceive('pushAndOpenPullRequest');
+
+    expect(fn () => app(TaskCommitIntegrator::class)->finalize(
+        $task,
+        $coderRun,
+        'commit-sha-1',
+        'Implemented the change.',
+        $coderRun->execution_token,
+    ))->toThrow(UnexpectedValueException::class);
+
+    expect($task->refresh()->status)->toBe('running')
+        ->and($task->outcome)->toBeNull()
+        ->and($task->handoffs()->where('reason', 'ci_failed')->count())->toBe(0)
+        ->and($coderRun->actions()->where('action', AgentRunAction::ACTION_CANDIDATE_FINALIZED)->count())->toBe(0)
+        ->and($coderRun->actions()->where('action', AgentRunAction::ACTION_WORKFLOW_OUTCOME_RECORDED)->count())->toBe(0);
+});
+
 test('a verified commit that passes CI completes the Task and opens a pull request', function () {
     [, $task, $coderRun, $qaRun] = taskWithApprovedCandidate();
     mock(TaskWorktreeManager::class)
@@ -310,6 +336,7 @@ test('QA repair handoffs durably fail the Task once the repair cycle limit is ex
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
     ]);
     app(CandidateAcceptanceGate::class)->recordReview($task, $coderRun, $qaRun, 'candidate-1', 'changes_requested', 'Needs fixes.', ['Handle nulls.']);
+    markAgentRunDocumented($qaRun);
 
     app(TaskWorkflowService::class)->handoff($qaRun, $task, 'coder', 'changes_requested', 'qa-repair-1', [], $qaRun->execution_token);
 
@@ -352,8 +379,10 @@ test('completing an Agent execution immediately triggers the next dispatch attem
  *
  * @return array{0: Project, 1: Task, 2: AgentRun, 3: AgentRun}
  */
-function taskWithApprovedCandidate(string $candidateTreeSha = 'candidate-1'): array
-{
+function taskWithApprovedCandidate(
+    string $candidateTreeSha = 'candidate-1',
+    bool $documentFinalizer = true,
+): array {
     [$project, $task, $candidateRun] = taskRoleHandoffFixture('coder');
     $task->workRequest()->update(['status' => 'waiting']);
     $task->update([
@@ -367,6 +396,7 @@ function taskWithApprovedCandidate(string $candidateTreeSha = 'candidate-1'): ar
         'mode' => 'initial', 'input' => 'Review.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'qa',
     ]);
     app(CandidateAcceptanceGate::class)->recordReview($task, $candidateRun, $qaRun, $candidateTreeSha, 'approved', 'Looks good.', []);
+    markAgentRunDocumented($qaRun);
     $handoff = app(TaskWorkflowService::class)->handoff(
         $qaRun,
         $task,
@@ -383,6 +413,11 @@ function taskWithApprovedCandidate(string $candidateTreeSha = 'candidate-1'): ar
         'mode' => 'initial', 'input' => 'Finalize.', 'sources' => [], 'agent_snapshot' => [], 'prompt_snapshot' => [], 'role' => 'coder',
     ]);
     $coderRun->update(['execution_metadata' => ['accepted_handoff_id' => $handoff->id, 'execution_mode' => 'approved']]);
+
+    if ($documentFinalizer) {
+        markAgentRunDocumented($coderRun);
+    }
+
     $task->refresh()->update(['status' => 'running']);
 
     return [$project, $task->refresh(), $coderRun, $qaRun];

@@ -309,6 +309,209 @@ test('a successful MCP QA review records the CandidateReview against the exact Q
     )->toBe(0);
 });
 
+test('a Project Manager cannot hand off a saved plan until its vault note exists', function () {
+    [, $workRequest, $run] = agentRunActionProjectManagerFixture();
+    $vaultPath = agentRunActionVaultPath();
+
+    try {
+        $task = app(TaskWorkflowService::class)->savePlan(
+            $run,
+            $workRequest,
+            [[
+                'title' => 'Implement the change',
+                'objective' => 'Deliver the requested behavior.',
+                'implementation_spec' => 'Follow existing conventions.',
+                'acceptance_criteria' => [],
+                'verification_commands' => [],
+                'browser_steps' => [],
+                'depends_on_position' => null,
+            ]],
+            (string) $run->execution_token,
+        )[0];
+
+        expect(fn () => app(TaskWorkflowService::class)->handoff(
+            $run,
+            $task,
+            'coder',
+            'implementation_ready',
+            'pm-coder-'.$run->id,
+            [],
+            (string) $run->execution_token,
+        ))->toThrow(UnexpectedValueException::class);
+
+        expect($task->handoffs()->count())->toBe(0)
+            ->and($run->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(0);
+
+        app(VaultDocumentationService::class)->writeWorkLog(
+            $run,
+            (string) $run->execution_token,
+            'Work Logs/pm-handoff.md',
+            "# PM work note\n",
+        );
+
+        $handoff = app(TaskWorkflowService::class)->handoff(
+            $run,
+            $task,
+            'coder',
+            'implementation_ready',
+            'pm-coder-'.$run->id,
+            [],
+            (string) $run->execution_token,
+        );
+
+        expect($handoff->reason)->toBe('implementation_ready')
+            ->and($task->refresh()->handoffs()->count())->toBe(1);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+});
+
+test('a Coder can save its result before documentation but cannot hand off to QA until its vault note exists', function () {
+    [, $task, $run] = taskRoleHandoffFixture('coder');
+    $vaultPath = agentRunActionVaultPath();
+
+    try {
+        $task->update([
+            'base_sha' => 'base-sha',
+            'worktree_path' => '/tmp/aisf-task-worktree',
+        ]);
+
+        mock(TaskWorktreeManager::class)
+            ->shouldReceive('ensureWorktree')->once()
+            ->shouldReceive('assertNoCommitBeforeQa')->times(3)
+            ->shouldReceive('changedFiles')->once()->andReturn([]);
+        mock(TaskCandidateFingerprint::class)
+            ->shouldReceive('forTask')->once()->andReturn([
+                'tree_sha' => 'candidate-tree-1',
+                'base_tree_sha' => 'base-tree',
+                'kind' => 'changes',
+            ]);
+
+        app(TaskWorkflowService::class)->saveResult(
+            $run,
+            $task,
+            [
+                'summary' => 'Implemented the requested behavior.',
+                'validation' => [],
+            ],
+            (string) $run->execution_token,
+        );
+
+        expect($run->actions()->where('action', AgentRunAction::ACTION_TASK_RESULT_SAVED)->count())->toBe(1);
+
+        expect(fn () => app(TaskWorkflowService::class)->handoff(
+            $run,
+            $task,
+            'qa',
+            'ready_for_review',
+            'coder-qa-'.$run->id,
+            [],
+            (string) $run->execution_token,
+        ))->toThrow(UnexpectedValueException::class);
+
+        expect($task->handoffs()->count())->toBe(0)
+            ->and($run->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(0);
+
+        app(VaultDocumentationService::class)->writeWorkLog(
+            $run,
+            (string) $run->execution_token,
+            'Work Logs/coder-handoff.md',
+            "# Coder work note\n",
+        );
+
+        app(TaskWorkflowService::class)->handoff(
+            $run,
+            $task,
+            'qa',
+            'ready_for_review',
+            'coder-qa-'.$run->id,
+            [],
+            (string) $run->execution_token,
+        );
+
+        expect($task->refresh()->handoffs()->count())->toBe(1)
+            ->and($run->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(1);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+});
+
+test('QA can save its review before documentation but cannot hand it back until its vault note exists', function (string $status, array $findings) {
+    [$project, $task, $coderRun] = taskRoleHandoffFixture('coder');
+    $vaultPath = agentRunActionVaultPath();
+
+    try {
+        $task->update([
+            'candidate_tree_sha' => 'candidate-1',
+            'candidate_created_by_run_id' => $coderRun->id,
+        ]);
+
+        $qaAgent = $project->agents()->where('role', 'qa')->sole();
+        $qaRun = app(AgentSessionManager::class)->startRun(
+            app(AgentSessionManager::class)->forSubject($qaAgent, $task),
+            'qa',
+            [
+                'mode' => 'initial',
+                'input' => 'Review the candidate.',
+                'sources' => [],
+                'agent_snapshot' => [],
+                'prompt_snapshot' => [],
+                'role' => 'qa',
+            ],
+        );
+
+        app(TaskWorkflowService::class)->saveReview(
+            $qaRun,
+            $task,
+            'candidate-1',
+            $status,
+            $status === 'approved' ? 'Approved.' : 'Changes required.',
+            $findings,
+            (string) $qaRun->execution_token,
+        );
+
+        expect($qaRun->actions()->where('action', AgentRunAction::ACTION_QA_REVIEW_SAVED)->count())->toBe(1);
+
+        expect(fn () => app(TaskWorkflowService::class)->handoff(
+            $qaRun,
+            $task,
+            'coder',
+            $status,
+            'qa-coder-'.$status.'-'.$qaRun->id,
+            [],
+            (string) $qaRun->execution_token,
+        ))->toThrow(UnexpectedValueException::class);
+
+        expect($task->handoffs()->count())->toBe(0)
+            ->and($qaRun->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(0);
+
+        app(VaultDocumentationService::class)->writeWorkLog(
+            $qaRun,
+            (string) $qaRun->execution_token,
+            'Work Logs/qa-'.$status.'.md',
+            "# QA work note\n",
+        );
+
+        app(TaskWorkflowService::class)->handoff(
+            $qaRun,
+            $task,
+            'coder',
+            $status,
+            'qa-coder-'.$status.'-'.$qaRun->id,
+            [],
+            (string) $qaRun->execution_token,
+        );
+
+        expect($task->refresh()->handoffs()->count())->toBe(1)
+            ->and($qaRun->actions()->where('action', AgentRunAction::ACTION_HANDOFF_CREATED)->count())->toBe(1);
+    } finally {
+        File::deleteDirectory($vaultPath);
+    }
+})->with([
+    'approved' => ['approved', []],
+    'changes requested' => ['changes_requested', ['Fix the regression.']],
+]);
+
 test('an idempotent MCP handoff retry does not duplicate durable action evidence', function () {
     [, $task, $run] = taskRoleHandoffFixture('coder');
 
@@ -327,6 +530,7 @@ test('an idempotent MCP handoff retry does not duplicate durable action evidence
         'candidate_created_by_run_id' => $run->id,
         'candidate_kind' => 'changes',
     ]);
+    markAgentRunDocumented($run);
 
     mock(TaskWorktreeManager::class)
         ->shouldReceive('assertNoCommitBeforeQa')
@@ -580,6 +784,7 @@ test('a later domain failure rolls back its handoff and action while preserving 
         'The candidate needs repair.',
         ['Fix the regression.'],
     );
+    markAgentRunDocumented($qaRun);
 
     mock(RepairCycleGuard::class)
         ->shouldReceive('limitExceeded')
@@ -769,6 +974,8 @@ test('vault note written evidence references the responsible AgentRun', function
             ->toBe(AgentRunAction::RESOURCE_AGENT_RUN);
         expect($action->resource_id)
             ->toBe($run->id);
+        expect(app(AgentRunActionRecorder::class)->hasVaultNoteWritten($run->refresh()))
+            ->toBeTrue();
 
         expect(
             $run->refresh()
@@ -1024,6 +1231,7 @@ function agentRunActionApprovedCandidateFixture(
         'The candidate is approved.',
         [],
     );
+    markAgentRunDocumented($qaRun);
 
     $handoff = app(TaskWorkflowService::class)->handoff(
         $qaRun,
@@ -1053,6 +1261,7 @@ function agentRunActionApprovedCandidateFixture(
         'accepted_handoff_id' => $handoff->id,
         'execution_mode' => 'approved',
     ]]);
+    markAgentRunDocumented($coderRun);
     $task->refresh()->update(['status' => 'running']);
 
     return [$project, $task->refresh(), $coderRun, $qaRun];

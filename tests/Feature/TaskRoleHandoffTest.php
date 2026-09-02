@@ -25,6 +25,7 @@ test('a handoff is durable and idempotent for an active configured Agent run', f
         'candidate_created_by_run_id' => $run->id,
         'candidate_kind' => 'changes',
     ]);
+    markAgentRunDocumented($run);
     mock(TaskWorktreeManager::class)->shouldReceive('assertNoCommitBeforeQa')->once();
 
     $service = app(TaskWorkflowService::class);
@@ -84,6 +85,7 @@ test('a Project Manager plan persists Tasks before creating Coder handoffs', fun
         'browser_steps' => [],
         'depends_on_position' => null,
     ]], $run->execution_token)[0];
+    markAgentRunDocumented($run);
     app(TaskWorkflowService::class)->handoff($run, $task, 'coder', 'implementation_ready', 'pm-coder-1', [], $run->execution_token);
 
     expect($workRequest->refresh()->status)->toBe('pending')
@@ -144,6 +146,7 @@ test('the dispatcher queues only a Task with an accepted PM to Coder handoff', f
         'browser_steps' => [],
         'depends_on_position' => null,
     ]], $run->execution_token)[0];
+    markAgentRunDocumented($run);
     app(TaskWorkflowService::class)->handoff(
         $run,
         $task,
@@ -213,6 +216,7 @@ test('a Coder repair turn receives the newest durable QA findings', function () 
     app(CandidateAcceptanceGate::class)->recordReview(
         $task, $candidateRun, $qaRun, 'candidate-tree-1', 'changes_requested', 'Needs repair.', ['Handle the empty result.'],
     );
+    markAgentRunDocumented($qaRun);
     $handoff = app(TaskWorkflowService::class)->handoff(
         $qaRun,
         $task,

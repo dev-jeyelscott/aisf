@@ -135,6 +135,7 @@ test('PM completion creates loosely-specified Tasks without requiring acceptance
             'implementation_spec' => '', 'acceptance_criteria' => [],
             'verification_commands' => [], 'browser_steps' => [], 'depends_on_position' => null,
         ]], $token)[0];
+        markAgentRunDocumented($run);
         app(TaskWorkflowService::class)->handoff($run, $task, 'coder', 'implementation_ready', 'pm-coder-'.$run->id, [], $token);
     });
 
@@ -156,6 +157,7 @@ test('PM already-implemented completion marks the WorkRequest completed without 
     [, $workRequest] = feature09Fixture();
     feature09FakeHarness('The README already exists.', function (string $path, string $prompt) use ($workRequest): void {
         [$run, $token] = feature09RunAuthorization($prompt);
+        markAgentRunDocumented($run);
         app(WorkflowOutcomeService::class)->record(
             $run, $workRequest, 'already_implemented', 'The README already exists.',
             ['The README already exists.'], $token,

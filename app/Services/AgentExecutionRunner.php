@@ -194,7 +194,7 @@ PROMPT;
         if ($role === 'qa') {
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
-You have read-only access. Use get_task_context, review the exact candidate_tree_sha, call save_qa_review, then call handoff_task to Coder with reason exactly "approved" or "changes_requested". Your final message is informational only. Do not edit or commit.
+You have read-only access. Use get_task_context and review the exact candidate_tree_sha. If you find a code-level defect, call save_qa_review with "changes_requested", then call handoff_task to Coder with reason "changes_requested". If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, call record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence; do not create a Coder repair handoff. Otherwise, call save_qa_review with "approved", then call handoff_task to Coder with reason "approved". Your final message is informational only. Do not edit or commit.
 PROMPT;
         }
 

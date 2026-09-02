@@ -397,6 +397,8 @@ class TaskWorkflowService
                 return $existing;
             }
 
+            $this->actionRecorder->assertVaultNoteWritten($run);
+
             $handoff = $locked->handoffs()->create([
                 'from_project_agent_id' => $run->agentSession->project_agent_id,
                 'to_project_agent_id' => $agent->id,
