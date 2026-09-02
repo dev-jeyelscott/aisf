@@ -39,6 +39,19 @@ test('a Project Manager prompt snapshots Agent configuration, Skills, and Task c
         ->and($composed['snapshot']['subject']['id'])->toBe($task->id);
 });
 
+test('a Project Manager prompt includes the durable WorkRequest ID', function () {
+    $project = Project::factory()->create();
+    app(ProjectAgentProvisioner::class)->ensureFor($project);
+    $foreman = $project->agents()->where('role', 'project_manager')->sole();
+    $workRequest = $project->workRequests()->create(['prompt' => 'Plan this request.']);
+
+    $composed = app(AgentPromptComposer::class)->compose($foreman, $workRequest, '/tmp/aisf-repository');
+
+    expect($composed['prompt'])
+        ->toContain("WORK REQUEST\nID: {$workRequest->id}\n")
+        ->and($composed['snapshot']['subject']['id'])->toBe($workRequest->id);
+});
+
 test('reported ephemeral delegations are persisted as child Agent runs', function () {
     $project = Project::factory()->create();
     app(ProjectAgentProvisioner::class)->ensureFor($project);

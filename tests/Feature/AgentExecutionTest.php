@@ -251,6 +251,23 @@ test('Agents execute from the Project directory without creating a Task worktree
         ->and($execution->harnessResult->successful)->toBeTrue();
 });
 
+test('Task Agents execute from the isolated worktree once it exists', function () {
+    [$project, , $task] = feature09TaskFixture();
+    app(TaskWorktreeManager::class)->ensureWorktree($task);
+    $task->refresh();
+    $executionPath = null;
+    $harness = feature09FakeHarness('Implemented.', function (string $path) use (&$executionPath): void {
+        $executionPath = $path;
+    });
+
+    $execution = app(AgentExecutionRunner::class)->run($task);
+
+    expect($executionPath)->toBe($task->worktree_path)
+        ->and($executionPath)->not->toBe($project->path)
+        ->and($harness->writable)->toBeTrue()
+        ->and($execution->harnessResult->successful)->toBeTrue();
+});
+
 test('a resumable Coder session persists and resumes the same provider conversation for the same Task', function () {
     [, , $task] = feature09TaskFixture();
     $harness = feature09FakeHarness('Implemented.', supportsResume: true);

@@ -104,7 +104,7 @@ class AgentPromptComposer
                 'last_handoff' => $task->last_handoff,
             ])->all();
 
-            return "WORK REQUEST\n{$subject->prompt}\nDurable planned Tasks: ".json_encode($tasks);
+            return "WORK REQUEST\nID: {$subject->id}\n{$subject->prompt}\nDurable planned Tasks: ".json_encode($tasks);
         }
 
         return "TASK\nTitle: {$subject->title}\nObjective: {$subject->objective}\nImplementation specification: {$subject->implementation_spec}\nAcceptance criteria: ".json_encode($subject->acceptance_criteria)."\nVerification commands: ".json_encode($subject->verification_commands)."\nBrowser verification steps: ".json_encode($subject->browser_steps)."\nPrior evidence: ".json_encode($subject->last_handoff);

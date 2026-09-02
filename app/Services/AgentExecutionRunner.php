@@ -185,6 +185,14 @@ class AgentExecutionRunner
         $writable = $subject instanceof Task
             && ($subject->last_handoff['to_role'] ?? null) === 'coder';
 
+        if (
+            $subject instanceof Task
+            && filled($subject->worktree_path)
+            && is_dir((string) $subject->worktree_path)
+        ) {
+            return [(string) $subject->worktree_path, $writable];
+        }
+
         return [(string) $this->projectFor($subject)->path, $writable];
     }
 
