@@ -91,21 +91,17 @@ class ProjectVerificationService
         }
 
         try {
-            $result = match ($profile['driver']) {
-                'native' => $this->executeNative(
+            $result = $profile['driver'] === 'native'
+                ? $this->executeNative(
                     $target['path'],
                     $profile,
-                ),
-                'docker_compose_exec' => $this->executeDockerCompose(
+                )
+                : $this->executeDockerCompose(
                     $attempt,
                     $context['project'],
                     $target['path'],
                     $profile,
-                ),
-                default => throw new UnexpectedValueException(
-                    'The Project verification profile uses an unsupported driver.',
-                ),
-            };
+                );
         } catch (ProcessTimedOutException $exception) {
             return $this->finishAttempt(
                 $attempt,
