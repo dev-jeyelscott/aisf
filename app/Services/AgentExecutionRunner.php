@@ -15,13 +15,14 @@ use UnexpectedValueException;
 class AgentExecutionRunner
 {
     /**
-     * Inject the provider harness, session manager, prompt composer, and durable Task context builder.
+     * Inject provider execution, session, prompt, Task context, and vault documentation collaborators.
      */
     public function __construct(
         private readonly AgentHarness $harness,
         private readonly AgentSessionManager $sessionManager,
         private readonly AgentPromptComposer $promptComposer,
         private readonly TaskContextBuilder $taskContextBuilder,
+        private readonly VaultDocumentationService $vaultDocumentationService,
     ) {}
 
     /**
@@ -47,7 +48,9 @@ class AgentExecutionRunner
         [$repositoryPath, $writable] = $this->executionTarget($subject);
         $promptContext = $this->promptComposer->compose($agent, $subject, $repositoryPath, $operatorInstruction);
         $executionToken = Str::random(64);
-        $prompt = $promptContext['prompt']."\n\n".$this->contractSection($subject, $role, $mode)
+        $prompt = $promptContext['prompt']
+            ."\n\n".$this->contractSection($subject, $role, $mode)
+            ."\n\n".$this->vaultDocumentationContractSection()
             ."\n\nACTIVE RUN AUTHORIZATION\nAgent run token: {$executionToken}";
 
         if ($subject instanceof Task) {
@@ -75,6 +78,11 @@ class AgentExecutionRunner
         ]);
 
         try {
+            $this->vaultDocumentationService->preflight(
+                $run,
+                $executionToken,
+            );
+
             $result = $resumingProviderSession
                 ? $this->harness->resume(
                     $agent,
@@ -177,7 +185,7 @@ class AgentExecutionRunner
     }
 
     /**
-     * Build the durable workflow contract for the currently authorized role and execution mode.
+     * Build the role-specific durable workflow contract without duplicating generic documentation policy.
      */
     private function contractSection(Task|WorkRequest $subject, string $role, string $mode): string
     {
@@ -185,31 +193,54 @@ class AgentExecutionRunner
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
 Inspect the repository read-only. Your final message is informational and never controls workflow state.
-After inspecting and deciding the outcome, call write_vault_work_log exactly once with a concise Markdown record of the work, evidence, and any blockers before calling any workflow-ending tool.
-For a new request, call save_task_plan, then call handoff_task for every dependency-ready Task using reason "implementation_ready".
+For a new request, call save_task_plan. Every dependency-ready Task must be handed off to Coder using handoff_task with reason "implementation_ready".
 For an existing plan, hand off each newly dependency-ready Task that has not already been handed off.
-If the entire request already exists or is deterministically blocked, call record_workflow_outcome instead of inventing Tasks.
+If the entire request already exists or is deterministically blocked, use record_workflow_outcome instead of inventing Tasks.
 PROMPT;
         }
 
         if ($role === 'qa') {
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
-You have read-only access. Use get_task_context and review the exact candidate_tree_sha. If you find a code-level defect, call save_qa_review with "changes_requested", then call handoff_task to Coder with reason "changes_requested". If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, call record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence; do not create a Coder repair handoff. Otherwise, call save_qa_review with "approved", then call handoff_task to Coder with reason "approved". Your final message is informational only. Do not edit or commit.
-Before save_qa_review, handoff_task, or record_workflow_outcome, call write_vault_work_log exactly once with a concise Markdown record of the review, evidence, and any blockers. The vault note is required durable evidence; do not finish the turn until it succeeds.
+You have read-only access. Use get_task_context and review the exact candidate_tree_sha.
+If you find a code-level defect, call save_qa_review with "changes_requested". The resulting handoff_task must return the Task to Coder with reason "changes_requested".
+If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, use record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence. Do not create a Coder repair handoff.
+Otherwise, call save_qa_review with "approved". The resulting handoff_task must return the approved candidate to Coder with reason "approved".
+Your final message is informational only. Do not edit or commit.
 PROMPT;
         }
 
         if ($mode === 'approved') {
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
-This is approved finalization mode. Do not modify the implementation. Call write_vault_work_log exactly once with a concise Markdown record of the finalization evidence before calling finalize_task. Commit the approved candidate when candidate_kind is "changes", then call finalize_task. For "no_change", call finalize_task without a commit. Your final message is informational only.
+This is approved finalization mode. Do not modify the implementation.
+When candidate_kind is "changes", commit the approved candidate before finalization. For "no_change", do not create a commit.
+Use finalize_task as the workflow-ending action after completing the required finalization work.
+Your final message is informational only.
 PROMPT;
         }
 
         return <<<PROMPT
 DURABLE WORKFLOW CONTRACT
-Coder mode: {$mode}. Use get_task_context, perform the required implementation or repair, test it, call save_task_result, then call write_vault_work_log exactly once with a concise Markdown record of the work, evidence, and any blockers before handing off the new candidate to QA. Do not commit before QA approval. Your final message is informational only. Use record_workflow_outcome only for a deterministic blocker, after the vault note succeeds.
+Coder mode: {$mode}. Use get_task_context, perform the required implementation or repair, test it, and call save_task_result.
+The successful workflow-ending action is handoff_task to QA for the new candidate. Do not commit before QA approval.
+Use record_workflow_outcome only for a deterministic blocker that prevents normal completion.
+Your final message is informational only.
+PROMPT;
+    }
+
+    /**
+     * Build one role-agnostic vault documentation invariant inherited by every provider turn.
+     */
+    private function vaultDocumentationContractSection(): string
+    {
+        return <<<'PROMPT'
+VAULT DOCUMENTATION INVARIANT
+Perform your normal role-specific work first, including applicable intermediate durable actions such as save_task_plan, save_task_result, or save_qa_review.
+Then use get_vault_rules, starting at "." and checking the intended destination directory when needed, to follow the applicable vault governance and choose a valid vault-relative Markdown destination.
+Call write_vault_work_log exactly once with one concise Agent-authored Markdown work note summarizing the completed work, evidence, decisions, and blockers. The work note is a summary, not a transcript of the conversation or provider output.
+Only after write_vault_work_log succeeds may you call a workflow-ending tool such as handoff_task, finalize_task, or record_workflow_outcome, as required by your role-specific workflow.
+Do not finish a satisfied, handed-off, finalized, or terminal/blocked turn unless the vault work note succeeds.
 PROMPT;
     }
 }

@@ -11,6 +11,7 @@ use App\Services\AgentExecutionRunner;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
+use App\Services\AgentTurnReconciler;
 use App\Services\CandidateAcceptanceGate;
 use App\Services\ProjectAgentProvisioner;
 use App\Services\TaskWorkflowService;
@@ -124,6 +125,38 @@ class Feature09FakeAgentHarness extends AgentHarness
         );
     }
 }
+
+beforeEach(function (): void {
+    $this->agentExecutionVaultPath = storage_path(
+        'framework/testing/vaults/'.Str::uuid(),
+    );
+
+    File::ensureDirectoryExists(
+        $this->agentExecutionVaultPath,
+    );
+
+    File::put(
+        $this->agentExecutionVaultPath.'/AGENTS.md',
+        "Agent execution test vault governance.\n",
+    );
+
+    config()->set(
+        'aisf.obsidian_vault_path',
+        $this->agentExecutionVaultPath,
+    );
+});
+
+afterEach(function (): void {
+    if (
+        isset($this->agentExecutionVaultPath)
+        && is_string($this->agentExecutionVaultPath)
+        && is_dir($this->agentExecutionVaultPath)
+    ) {
+        File::deleteDirectory(
+            $this->agentExecutionVaultPath,
+        );
+    }
+});
 
 test('PM completion creates loosely-specified Tasks without requiring acceptance criteria or browser steps', function () {
     Queue::fake([DispatchWorkflowForProject::class]);
@@ -283,10 +316,189 @@ test('different Agent roles use separate logical sessions for the same Task', fu
         ->and($harness->resumeCalls)->toBe(0)
         ->and($coderExecution->run->role)->toBe('coder')
         ->and($qaExecution->run->role)->toBe('qa')
-        ->and($harness->prompt)->toContain('write_vault_work_log exactly once')
-        ->and($harness->prompt)->toContain('The vault note is required durable evidence')
+        ->and(substr_count($harness->prompt, 'VAULT DOCUMENTATION INVARIANT'))->toBe(1)
+        ->and(substr_count($harness->prompt, 'write_vault_work_log exactly once'))->toBe(1)
         ->and($coderSession->id)->not->toBe($qaSession->id)
         ->and($coderSession->project_agent_id)->not->toBe($qaSession->project_agent_id);
+});
+
+test('all current execution modes inherit one identical generic vault documentation invariant', function () {
+    $prompts = [
+        'pm_initial' => feature09WorkRequestPrompt(false),
+        'pm_dependency_handoff' => feature09WorkRequestPrompt(true),
+        'coder_implementation' => feature09TaskPrompt('coder', 'implementation_ready'),
+        'coder_repair' => feature09TaskPrompt('coder', 'changes_requested'),
+        'qa_review' => feature09TaskPrompt('qa', 'implementation_ready'),
+        'approved_finalization' => feature09TaskPrompt('coder', 'approved'),
+    ];
+
+    $contracts = [];
+
+    foreach ($prompts as $name => $prompt) {
+        expect(substr_count($prompt, 'VAULT DOCUMENTATION INVARIANT'))
+            ->toBe(1);
+
+        expect(substr_count($prompt, 'write_vault_work_log exactly once'))
+            ->toBe(1);
+
+        $contracts[$name] = feature09VaultDocumentationInvariant($prompt);
+    }
+
+    expect(array_unique(array_values($contracts)))
+        ->toHaveCount(1);
+
+    $contract = $contracts['pm_initial'];
+
+    expect($contract)
+        ->toContain('Perform your normal role-specific work first')
+        ->toContain('save_task_plan, save_task_result, or save_qa_review')
+        ->toContain('use get_vault_rules')
+        ->toContain('write_vault_work_log exactly once')
+        ->toContain('summary, not a transcript')
+        ->toContain('handoff_task, finalize_task, or record_workflow_outcome');
+
+    expect($prompts['pm_initial'])
+        ->toContain('For a new request, call save_task_plan.');
+
+    expect($prompts['pm_dependency_handoff'])
+        ->toContain('For an existing plan, hand off each newly dependency-ready Task');
+
+    expect($prompts['coder_implementation'])
+        ->toContain('Coder mode: implementation_ready.')
+        ->toContain('call save_task_result.');
+
+    expect($prompts['coder_repair'])
+        ->toContain('Coder mode: changes_requested.')
+        ->toContain('Use record_workflow_outcome only for a deterministic blocker');
+
+    expect($prompts['qa_review'])
+        ->toContain('call save_qa_review with "changes_requested"')
+        ->toContain('call save_qa_review with "approved"')
+        ->toContain('Do not edit or commit.');
+
+    expect($prompts['approved_finalization'])
+        ->toContain('This is approved finalization mode.')
+        ->toContain('Use finalize_task as the workflow-ending action');
+});
+
+test('a future Agent role inherits the generic vault contract without a vault-specific role branch', function () {
+    $prompt = feature09TaskPrompt(
+        'future_specialist',
+        'future_specialist_review',
+    );
+
+    expect(substr_count($prompt, 'VAULT DOCUMENTATION INVARIANT'))
+        ->toBe(1);
+
+    expect(substr_count($prompt, 'write_vault_work_log exactly once'))
+        ->toBe(1);
+
+    expect(feature09VaultDocumentationInvariant($prompt))
+        ->toContain('use get_vault_rules')
+        ->toContain('write_vault_work_log exactly once')
+        ->toContain('handoff_task, finalize_task, or record_workflow_outcome');
+
+    expect($prompt)
+        ->toContain('Future Specialist');
+});
+
+test('vault preflight prevents a fresh provider turn and reconciles the AgentRun as infrastructure failure', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness('This provider must not run.');
+    config()->set('aisf.obsidian_vault_path', null);
+    $job = new ProcessAgentExecution($task);
+    $caught = null;
+
+    try {
+        app()->call([$job, 'handle']);
+    } catch (RuntimeException $exception) {
+        $caught = $exception;
+    }
+
+    expect($caught)
+        ->toBeInstanceOf(RuntimeException::class);
+
+    expect($caught?->getMessage())
+        ->toContain('The Obsidian vault path is not configured.');
+
+    expect($harness->startCalls)
+        ->toBe(0);
+
+    expect($harness->resumeCalls)
+        ->toBe(0);
+
+    $run = AgentRun::query()->latest('id')->firstOrFail();
+
+    expect($run->status)
+        ->toBe('failed')
+        ->and($run->reconciliation_status)->toBe('recoverable')
+        ->and($run->failure_class)->toBe('infrastructure_recoverable');
+
+    $job->failed($caught);
+
+    expect($task->refresh()->status)
+        ->toBe('failed')
+        ->and($task->blocked_reason)
+        ->toContain('The Obsidian vault path is not configured.');
+});
+
+test('vault preflight prevents provider resume before the resumed provider turn starts', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness(
+        'Provider turn completed.',
+        supportsResume: true,
+    );
+    $runner = app(AgentExecutionRunner::class);
+    $reconciler = app(AgentTurnReconciler::class);
+
+    $firstExecution = $runner->run($task);
+    $firstReconciliation = $reconciler->reconcile(
+        $task,
+        $firstExecution,
+    );
+
+    expect($firstReconciliation->classification)
+        ->toBe('recoverable');
+
+    expect($harness->startCalls)
+        ->toBe(1);
+
+    expect($harness->resumeCalls)
+        ->toBe(0);
+
+    File::delete(
+        $this->agentExecutionVaultPath.'/AGENTS.md',
+    );
+
+    $secondExecution = $runner->run($task->refresh());
+    $secondReconciliation = $reconciler->reconcile(
+        $task->refresh(),
+        $secondExecution,
+    );
+
+    expect($harness->startCalls)
+        ->toBe(1);
+
+    expect($harness->resumeCalls)
+        ->toBe(0);
+
+    expect($secondExecution->harnessResult->successful)
+        ->toBeFalse();
+
+    expect($secondExecution->harnessResult->failureMessage)
+        ->toContain(
+            'The Obsidian vault root must contain a readable AGENTS.md governance file.',
+        );
+
+    expect($secondReconciliation->classification)
+        ->toBe('recoverable')
+        ->and($secondReconciliation->failureClass)
+        ->toBe('infrastructure_recoverable')
+        ->and($secondReconciliation->retryInfrastructure)
+        ->toBeTrue();
+
+    expect($secondExecution->run->fresh()->status)
+        ->toBe('failed');
 });
 
 test('a non-resumable provider keeps using fresh fallback invocations without persisting provider identity', function () {
@@ -671,6 +883,106 @@ function feature09TaskFixture(): array
     ]);
 
     return [$project, $workRequest, $task];
+}
+
+/**
+ * Capture one Project Manager prompt in initial-planning or dependency-handoff mode.
+ */
+function feature09WorkRequestPrompt(bool $withExistingPlan): string
+{
+    [, $workRequest] = feature09Fixture();
+
+    if ($withExistingPlan) {
+        $workRequest->tasks()->create([
+            'position' => 1,
+            'title' => 'Existing planned Task',
+            'objective' => 'Preserve the existing plan.',
+            'implementation_spec' => '',
+            'acceptance_criteria' => [],
+            'verification_commands' => [],
+            'browser_steps' => [],
+            'status' => 'waiting',
+            'last_handoff' => [
+                'to_role' => 'coder',
+                'reason' => 'implementation_ready',
+            ],
+        ]);
+    }
+
+    $harness = feature09FakeHarness(
+        'Prompt captured.',
+    );
+
+    app(AgentExecutionRunner::class)->run(
+        $workRequest->refresh(),
+    );
+
+    return $harness->prompt;
+}
+
+/**
+ * Capture one Task prompt for the requested role and durable handoff reason.
+ */
+function feature09TaskPrompt(string $role, string $reason): string
+{
+    [$project, , $task] = feature09TaskFixture();
+
+    if (! $project->agents()->where('role', $role)->exists()) {
+        $project->agents()->create([
+            'role' => $role,
+            'name' => 'Future Specialist',
+            'harness' => 'codex',
+            'enabled' => true,
+        ]);
+    }
+
+    $task->update([
+        'last_handoff' => [
+            'to_role' => $role,
+            'reason' => $reason,
+        ],
+    ]);
+
+    $harness = feature09FakeHarness(
+        'Prompt captured.',
+    );
+
+    app(AgentExecutionRunner::class)->run(
+        $task->refresh(),
+    );
+
+    return $harness->prompt;
+}
+
+/**
+ * Extract the generic vault documentation section from one generated provider prompt.
+ */
+function feature09VaultDocumentationInvariant(string $prompt): string
+{
+    $heading = 'VAULT DOCUMENTATION INVARIANT';
+    $start = strpos($prompt, $heading);
+
+    if ($start === false) {
+        return '';
+    }
+
+    $end = strpos(
+        $prompt,
+        "\n\nACTIVE RUN AUTHORIZATION",
+        $start,
+    );
+
+    if ($end === false) {
+        return trim(substr($prompt, $start));
+    }
+
+    return trim(
+        substr(
+            $prompt,
+            $start,
+            $end - $start,
+        ),
+    );
 }
 
 /**
