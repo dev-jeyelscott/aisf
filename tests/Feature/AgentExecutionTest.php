@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\AgentCapabilityException;
 use App\Jobs\DispatchWorkflowForProject;
 use App\Jobs\ProcessAgentExecution;
 use App\Models\AgentRun;
@@ -7,9 +8,11 @@ use App\Models\Project;
 use App\Models\ProjectAgent;
 use App\Models\Task;
 use App\Models\WorkRequest;
+use App\Services\AgentCapabilityPreflight;
 use App\Services\AgentExecutionRunner;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
+use App\Services\AgentRuntimeEnvironment;
 use App\Services\AgentSessionManager;
 use App\Services\AgentTurnReconciler;
 use App\Services\CandidateAcceptanceGate;
@@ -22,6 +25,24 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+
+class Feature09PermissiveCapabilityPreflight extends AgentCapabilityPreflight
+{
+    public function verify(ProjectAgent $agent, string $repositoryPath): void
+    {
+        // Permissive by default: these fixtures test workflow behavior, not host capability checks.
+    }
+}
+
+class Feature09FailingCapabilityPreflight extends AgentCapabilityPreflight
+{
+    public function __construct(private readonly string $message) {}
+
+    public function verify(ProjectAgent $agent, string $repositoryPath): void
+    {
+        throw new AgentCapabilityException($this->message);
+    }
+}
 
 class Feature09FakeAgentHarness extends AgentHarness
 {
@@ -144,6 +165,10 @@ beforeEach(function (): void {
         'aisf.obsidian_vault_path',
         $this->agentExecutionVaultPath,
     );
+
+    app()->instance(AgentCapabilityPreflight::class, new Feature09PermissiveCapabilityPreflight(
+        app(AgentRuntimeEnvironment::class),
+    ));
 });
 
 afterEach(function (): void {
@@ -566,6 +591,62 @@ test('a resumed provider cannot silently replace the persisted provider session 
         ->and($secondExecution->harnessResult->failureMessage)->toContain('different session identifier')
         ->and($session->provider_session_id)->toBe('feature09-provider-session-1')
         ->and($harness->resumeCalls)->toBe(1);
+});
+
+test('a capability preflight failure is recorded as a capability diagnostic, not a fabricated code defect', function () {
+    [, , $task] = feature09TaskFixture();
+    feature09FakeHarness('This provider must not run.');
+    app()->instance(AgentCapabilityPreflight::class, new Feature09FailingCapabilityPreflight(
+        'Docker is required for this Project but is not available to the Agent worker user.',
+    ));
+
+    $execution = app(AgentExecutionRunner::class)->run($task);
+
+    expect($execution->harnessResult->successful)->toBeFalse()
+        ->and($execution->harnessResult->failureMessage)->toBe(
+            'Docker is required for this Project but is not available to the Agent worker user.',
+        );
+});
+
+test('PM and QA prompt contracts keep the strengthened repository read-only sentence', function () {
+    $pmPrompt = feature09WorkRequestPrompt(false);
+    $qaPrompt = feature09TaskPrompt('qa', 'implementation_ready');
+
+    $sentence = 'you are not authorized to modify, stage, or commit any file in this repository under any circumstance, trusted-local or not.';
+
+    expect($pmPrompt)->toContain($sentence)
+        ->and($qaPrompt)->toContain($sentence);
+});
+
+test('the sandboxed Docker-forcing verification contract is preserved by default', function () {
+    config()->set('aisf.trusted_local_execution', false);
+    $prompt = feature09TaskPrompt('qa', 'implementation_ready');
+
+    expect($prompt)
+        ->toContain('Never invoke Docker directly as a workaround.')
+        ->toContain('you MUST call run_project_verification with profile "ci"');
+});
+
+test('the trusted-local verification contract replaces the Docker-forcing text when enabled', function () {
+    config()->set('aisf.trusted_local_execution', true);
+    $prompt = feature09TaskPrompt('qa', 'implementation_ready');
+
+    expect($prompt)
+        ->toContain('TERMINAL-PARITY LOCAL EXECUTION')
+        ->toContain('run the commands a developer would run directly, including Docker')
+        ->not->toContain('Never invoke Docker directly as a workaround.')
+        ->not->toContain('you MUST call run_project_verification with profile "ci"');
+});
+
+test('Coder retains a writable execution target and normal command capability under trusted local execution', function () {
+    config()->set('aisf.trusted_local_execution', true);
+    [$project, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness('Implemented.');
+
+    $execution = app(AgentExecutionRunner::class)->run($task);
+
+    expect($harness->writable)->toBeTrue()
+        ->and($execution->harnessResult->successful)->toBeTrue();
 });
 
 test('ensureWorktree recovers from a stale branch and worktree left by a previous failed attempt', function () {

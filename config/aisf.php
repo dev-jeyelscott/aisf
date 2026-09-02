@@ -92,4 +92,33 @@ return [
 
     'max_protocol_recoveries' => (int) env('AISF_MAX_PROTOCOL_RECOVERIES', 2),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Trusted Local Agent Execution
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, an Agent's own Codex/Claude subprocess may use the AISF
+    | worker user's pre-existing host Docker access directly, the same as a
+    | developer's terminal session, instead of being forced through
+    | run_project_verification for every Docker-dependent check. Only enable
+    | this for a worker deployment where every configured Project is fully
+    | trusted. The Docker-sandboxed verification bridge above remains
+    | available regardless of this flag.
+    |
+    | agent_runtime_path/agent_runtime_home let the queue worker's Codex/Claude
+    | subprocess resolve the same PATH/HOME a developer's interactive shell
+    | would (Volta/NVM-managed binaries included), independent of this flag.
+    | Leave unset to inherit the worker process's ambient environment.
+    |
+    */
+
+    'trusted_local_execution' => filter_var(
+        env('AISF_TRUSTED_LOCAL_EXECUTION', false),
+        FILTER_VALIDATE_BOOL,
+    ),
+
+    'agent_runtime_path' => env('AISF_AGENT_PATH'),
+
+    'agent_runtime_home' => env('AISF_AGENT_HOME'),
+
 ];

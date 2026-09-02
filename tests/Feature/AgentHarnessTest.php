@@ -5,6 +5,99 @@ use App\Services\AgentHarness;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
 
+it('applies the resolved runtime environment to Codex initial, resume, and resume-probe executions', function () {
+    config()->set('aisf.agent_runtime_path', '/resolved/bin:/usr/bin');
+    config()->set('aisf.agent_runtime_home', '/resolved/home');
+
+    $environments = [];
+
+    Process::fake(function (PendingProcess $process) use (&$environments) {
+        $environments[] = $process->environment;
+
+        if ($process->command === ['codex', 'exec', '--help']) {
+            return Process::result(output: 'Usage: codex exec resume --json --output-schema');
+        }
+
+        return Process::result(output: implode("\n", [
+            json_encode(['type' => 'thread.started', 'thread_id' => 'codex-session-1'], JSON_THROW_ON_ERROR),
+            json_encode(['type' => 'item.completed', 'item' => ['type' => 'agent_message', 'text' => 'ok']], JSON_THROW_ON_ERROR),
+        ]));
+    });
+
+    Process::preventStrayProcesses();
+
+    $agent = new ProjectAgent(['harness' => 'codex']);
+    $harness = app(AgentHarness::class);
+
+    $harness->start($agent, sys_get_temp_dir(), 'Inspect the repository.');
+    $harness->resume($agent, sys_get_temp_dir(), 'codex-session-1', 'Inspect the delta.');
+
+    expect($environments)->toHaveCount(3)
+        ->and($environments[0])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home'])
+        ->and($environments[1])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home'])
+        ->and($environments[2])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home']);
+});
+
+it('applies the resolved runtime environment to Claude initial and resume executions', function () {
+    config()->set('aisf.agent_runtime_path', '/resolved/bin:/usr/bin');
+    config()->set('aisf.agent_runtime_home', '/resolved/home');
+
+    $environments = [];
+
+    Process::fake(function (PendingProcess $process) use (&$environments) {
+        $environments[] = $process->environment;
+
+        if ($process->command === ['claude', '--help']) {
+            return Process::result(output: 'Usage: claude --resume --output-format --json-schema');
+        }
+
+        return Process::result(output: json_encode([
+            'type' => 'result',
+            'session_id' => 'claude-session-1',
+            'result' => 'ok',
+        ], JSON_THROW_ON_ERROR));
+    });
+
+    Process::preventStrayProcesses();
+
+    $agent = new ProjectAgent(['harness' => 'claude']);
+    $harness = app(AgentHarness::class);
+
+    $harness->start($agent, sys_get_temp_dir(), 'Inspect the repository.');
+    $harness->resume($agent, sys_get_temp_dir(), 'claude-session-1', 'Inspect the delta.');
+
+    expect($environments)->toHaveCount(3)
+        ->and($environments[0])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home'])
+        ->and($environments[1])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home'])
+        ->and($environments[2])->toBe(['PATH' => '/resolved/bin:/usr/bin', 'HOME' => '/resolved/home']);
+});
+
+it('falls back to the ambient environment when no runtime PATH/HOME override is configured', function () {
+    config()->set('aisf.agent_runtime_path', null);
+    config()->set('aisf.agent_runtime_home', null);
+
+    $environments = [];
+
+    Process::fake(function (PendingProcess $process) use (&$environments) {
+        $environments[] = $process->environment;
+
+        if ($process->command === ['codex', 'exec', '--help']) {
+            return Process::result(output: 'Usage: codex exec [OPTIONS]');
+        }
+
+        return Process::result(output: '{"summary":"ok"}');
+    });
+
+    Process::preventStrayProcesses();
+
+    $agent = new ProjectAgent(['harness' => 'codex']);
+
+    app(AgentHarness::class)->start($agent, sys_get_temp_dir(), 'Inspect the repository.');
+
+    expect($environments)->toHaveCount(2)
+        ->and($environments[1])->toBe([]);
+});
+
 it('starts and resumes Codex with a persistent read-only thread when the installed CLI supports resume', function () {
     $executions = [];
 

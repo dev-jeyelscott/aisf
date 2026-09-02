@@ -23,6 +23,7 @@ class AgentExecutionRunner
         private readonly AgentPromptComposer $promptComposer,
         private readonly TaskContextBuilder $taskContextBuilder,
         private readonly VaultDocumentationService $vaultDocumentationService,
+        private readonly AgentCapabilityPreflight $capabilityPreflight,
     ) {}
 
     /**
@@ -80,6 +81,8 @@ class AgentExecutionRunner
         ]);
 
         try {
+            $this->capabilityPreflight->verify($agent, $repositoryPath);
+
             $this->vaultDocumentationService->preflight(
                 $run,
                 $executionToken,
@@ -208,18 +211,20 @@ Inspect the repository read-only. Your final message is informational and never 
 For a new request, call save_task_plan. Every dependency-ready Task must be handed off to Coder using handoff_task with reason "implementation_ready".
 For an existing plan, hand off each newly dependency-ready Task that has not already been handed off.
 If the entire request already exists or is deterministically blocked, use record_workflow_outcome instead of inventing Tasks.
+You have host execution capability for inspection and verification commands only; you are not authorized to modify, stage, or commit any file in this repository under any circumstance, trusted-local or not.
 PROMPT;
         }
 
         if ($role === 'qa') {
-            return <<<'PROMPT'
+            return <<<PROMPT
 DURABLE WORKFLOW CONTRACT
 You have read-only access. Use get_task_context and review the exact candidate_tree_sha.
-Before recording a QA decision, if the Task has verification_commands, you MUST call run_project_verification with profile "ci" and a fresh idempotency key for this verification attempt. Do not classify required PHP, type, or build checks as provider-environment blockers until the host-controlled verification result is available.
+{$this->qaVerificationRequirementSentence()}
 If you find a code-level defect, call save_qa_review with "changes_requested". The resulting handoff_task must return the Task to Coder with reason "changes_requested".
 If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, use record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence. Do not create a Coder repair handoff.
 Otherwise, call save_qa_review with "approved". The resulting handoff_task must return the approved candidate to Coder with reason "approved".
 Your final message is informational only. Do not edit or commit.
+You have host execution capability for inspection and verification commands only; you are not authorized to modify, stage, or commit any file in this repository under any circumstance, trusted-local or not.
 PROMPT;
         }
 
@@ -247,11 +252,53 @@ PROMPT;
      */
     private function projectVerificationContractSection(): string
     {
+        return config('aisf.trusted_local_execution')
+            ? $this->trustedLocalVerificationContractSection()
+            : $this->sandboxedVerificationContractSection();
+    }
+
+    /**
+     * Build the sentence governing when QA must call run_project_verification, worded for the active trust mode.
+     */
+    private function qaVerificationRequirementSentence(): string
+    {
+        if (config('aisf.trusted_local_execution')) {
+            return 'Before recording a QA decision, if the Task has verification_commands, run them directly the way a developer would (or call run_project_verification with profile "ci" and a fresh idempotency key if you specifically want durable evidence). Do not classify a genuine tooling or Docker failure as a code defect until you have confirmed it is not a host capability problem.';
+        }
+
+        return 'Before recording a QA decision, if the Task has verification_commands, you MUST call run_project_verification with profile "ci" and a fresh idempotency key for this verification attempt. Do not classify required PHP, type, or build checks as provider-environment blockers until the host-controlled verification result is available.';
+    }
+
+    /**
+     * Build the default host verification contract that routes Docker/infrastructure-dependent
+     * checks exclusively through run_project_verification.
+     */
+    private function sandboxedVerificationContractSection(): string
+    {
         return <<<'PROMPT'
 HOST-CONTROLLED PROJECT VERIFICATION
 When required verification depends on Docker, databases, Redis, browsers, or host infrastructure that your provider sandbox cannot access, use run_project_verification with an operator-approved profile and a unique idempotency key for that logical attempt.
 Never invoke Docker directly as a workaround. Never invent a host command, service name, container name, Docker option, environment variable, mount, or shell command.
 A repeated call for the same logical attempt must reuse its idempotency key. A genuinely new verification attempt after relevant work changes must use a new idempotency key.
+Treat "passed" as successful verification and "failed" as an executed verification whose checks failed.
+Treat "environment_unavailable" as external verification infrastructure evidence, not automatically as a code defect.
+Treat "timed_out" separately and determine from the evidence whether the timeout indicates code behavior or external infrastructure.
+Treat "stale_candidate" as unusable evidence because the durable candidate identity changed.
+QA verification of a Task must apply to the exact candidate_tree_sha being reviewed. Do not approve a different mutable checkout.
+PROMPT;
+    }
+
+    /**
+     * Build the trusted-local host verification contract: the Agent has the same host access as a
+     * developer who launched the provider CLI manually from this repository.
+     */
+    private function trustedLocalVerificationContractSection(): string
+    {
+        return <<<'PROMPT'
+TERMINAL-PARITY LOCAL EXECUTION
+You are running with the same host access as a developer who launched this provider CLI manually from this repository's directory. Inspect the repository (compose.yaml/docker-compose.yml, vendor/bin/sail, composer.json/package.json scripts, Makefile, AGENTS.md, helper scripts) and run the commands a developer would run directly, including Docker, when they are available to you.
+Use run_project_verification only when the operator specifically requires durable, idempotency-keyed, operator-approved verification evidence, or when host infrastructure genuinely is not available to your own subprocess. When you do call it, never invent a host command, service name, container name, Docker option, environment variable, mount, or shell command for that call.
+A repeated run_project_verification call for the same logical attempt must reuse its idempotency key. A genuinely new verification attempt after relevant work changes must use a new idempotency key.
 Treat "passed" as successful verification and "failed" as an executed verification whose checks failed.
 Treat "environment_unavailable" as external verification infrastructure evidence, not automatically as a code defect.
 Treat "timed_out" separately and determine from the evidence whether the timeout indicates code behavior or external infrastructure.

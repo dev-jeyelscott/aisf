@@ -32,6 +32,8 @@ class VaultDocumentationWorkflowHarness extends AgentHarness
     /** @var list<array{role: string, writable: bool}> */
     public array $calls = [];
 
+    public function __construct() {}
+
     /**
      * Force each capability check through a fresh provider turn.
      */

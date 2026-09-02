@@ -16,6 +16,10 @@ class AgentHarness
     /** @var array<string, bool> */
     private array $resumeSupport = [];
 
+    public function __construct(
+        private readonly AgentRuntimeEnvironment $runtimeEnvironment,
+    ) {}
+
     /**
      * Determine whether the installed provider CLI advertises stable resumable execution support.
      */
@@ -106,7 +110,8 @@ class AgentHarness
     private function probeResumeSupport(array $command, array $requiredHelpTokens): bool
     {
         try {
-            $result = Process::timeout(5)
+            $result = Process::env($this->runtimeEnvironment->resolve())
+                ->timeout(5)
                 ->idleTimeout(5)
                 ->run($command);
         } catch (Throwable) {
@@ -187,6 +192,7 @@ class AgentHarness
             $command[] = '-';
 
             $result = Process::path($repositoryPath)
+                ->env($this->runtimeEnvironment->resolve())
                 ->input($prompt)
                 ->forever()
                 ->run($command);
@@ -388,6 +394,7 @@ class AgentHarness
         }
 
         $result = Process::path($repositoryPath)
+            ->env($this->runtimeEnvironment->resolve())
             ->input($prompt)
             ->forever()
             ->run($command);

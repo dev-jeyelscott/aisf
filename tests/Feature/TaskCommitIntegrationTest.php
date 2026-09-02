@@ -5,7 +5,9 @@ use App\Jobs\ProcessAgentExecution;
 use App\Models\AgentRun;
 use App\Models\AgentRunAction;
 use App\Models\Project;
+use App\Models\ProjectAgent;
 use App\Models\Task;
+use App\Services\AgentCapabilityPreflight;
 use App\Services\AgentHarness;
 use App\Services\AgentHarnessResult;
 use App\Services\AgentSessionManager;
@@ -368,6 +370,12 @@ test('completing an Agent execution immediately triggers the next dispatch attem
     $workRequest = $project->workRequests()->create(['prompt' => 'Plan this change.', 'status' => 'pending']);
     $output = json_encode(['status' => 'completed', 'summary' => 'Nothing to do.', 'tasks' => []], JSON_THROW_ON_ERROR);
     mock(AgentHarness::class)->shouldReceive('start')->once()->andReturn(new AgentHarnessResult(true, $output, null, 0));
+    app()->instance(AgentCapabilityPreflight::class, new class extends AgentCapabilityPreflight
+    {
+        public function __construct() {}
+
+        public function verify(ProjectAgent $agent, string $repositoryPath): void {}
+    });
 
     app()->call([new ProcessAgentExecution($workRequest), 'handle']);
 
