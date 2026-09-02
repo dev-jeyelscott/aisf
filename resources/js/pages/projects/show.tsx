@@ -638,6 +638,15 @@ function TaskEmptyState({
                 Existing WorkRequests have not produced a persisted Task that
                 can be displayed here.
             </p>
+            <Button
+                type="button"
+                variant="outline"
+                className="mt-5"
+                onClick={onNewWorkRequest}
+            >
+                <Plus aria-hidden="true" />
+                New Work Request
+            </Button>
         </div>
     );
 }

@@ -19,7 +19,7 @@ use UnexpectedValueException;
 
 class ProjectVerificationService
 {
-    private const DOCKER_STAGE_ROOT = '/tmp/aisf-verification';
+    private const DOCKER_STAGE_ROOT = '/var/tmp/aisf-verification';
 
     /**
      * Inject candidate fingerprinting used to bind QA verification to immutable durable evidence.
@@ -754,6 +754,7 @@ class ProjectVerificationService
         }
 
         $stagePath = self::DOCKER_STAGE_ROOT.'/run-'.$attempt->id;
+        $sourcePath = $stagePath.'-source';
         $stageCreated = false;
 
         try {
@@ -764,11 +765,12 @@ class ProjectVerificationService
                     'exec',
                     '-T',
                     '--user',
-                    '0',
+                    $user,
                     $service,
                     'mkdir',
                     '-p',
                     $stagePath,
+                    $sourcePath,
                 ],
                 30,
             );
@@ -788,7 +790,7 @@ class ProjectVerificationService
                     'docker',
                     'cp',
                     rtrim($targetPath, DIRECTORY_SEPARATOR).'/.',
-                    $containerId.':'.$stagePath,
+                    $containerId.':'.$sourcePath,
                 ],
                 min($timeout, 300),
             );
@@ -800,27 +802,26 @@ class ProjectVerificationService
                 );
             }
 
-            $ownership = $this->dockerProcess(
+            $stage = $this->dockerProcess(
                 $definitionRoot,
                 [
                     ...$prefix,
                     'exec',
                     '-T',
                     '--user',
-                    '0',
-                    $service,
-                    'chown',
-                    '-R',
-                    '--no-dereference',
                     $user,
+                    $service,
+                    'cp',
+                    '-R',
+                    $sourcePath.'/.',
                     $stagePath,
                 ],
-                min($timeout, 120),
+                min($timeout, 300),
             );
 
-            if ($ownership->failed()) {
+            if ($stage->failed()) {
                 return $this->environmentFailure(
-                    $ownership,
+                    $stage,
                     'AISF could not prepare verifier workspace ownership.',
                 );
             }
@@ -872,12 +873,13 @@ class ProjectVerificationService
                             'exec',
                             '-T',
                             '--user',
-                            '0',
+                            $user,
                             $service,
                             'rm',
                             '-rf',
                             '--',
                             $stagePath,
+                            $sourcePath,
                         ],
                         30,
                     );

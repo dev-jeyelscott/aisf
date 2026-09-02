@@ -207,6 +207,7 @@ PROMPT;
             return <<<'PROMPT'
 DURABLE WORKFLOW CONTRACT
 You have read-only access. Use get_task_context and review the exact candidate_tree_sha.
+Before recording a QA decision, if the Task has verification_commands, you MUST call run_project_verification with profile "ci" and a fresh idempotency key for this verification attempt. Do not classify required PHP, type, or build checks as provider-environment blockers until the host-controlled verification result is available.
 If you find a code-level defect, call save_qa_review with "changes_requested". The resulting handoff_task must return the Task to Coder with reason "changes_requested".
 If the candidate has no code-level defects and verification is blocked only by an unavailable or misconfigured external environment, use record_workflow_outcome for this Task with outcome "blocked" and include the environment evidence. Do not create a Coder repair handoff.
 Otherwise, call save_qa_review with "approved". The resulting handoff_task must return the approved candidate to Coder with reason "approved".
