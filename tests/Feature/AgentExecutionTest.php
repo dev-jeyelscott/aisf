@@ -28,25 +28,82 @@ class Feature09FakeAgentHarness extends AgentHarness
 
     public bool $writable = false;
 
+    public int $startCalls = 0;
+
+    public int $resumeCalls = 0;
+
+    public ?string $lastResumedProviderSessionId = null;
+
     /**
-     * @param  (callable(string $worktreePath): void)|null  $sideEffect
+     * Configure deterministic provider behavior for Agent execution feature tests.
+     *
+     * @param  (callable(string $repositoryPath, string $prompt): void)|null  $sideEffect
      */
     public function __construct(
         private readonly string|Throwable $result,
         private $sideEffect = null,
+        private readonly bool $supportsResume = false,
+        private readonly ?string $resumeProviderSessionId = null,
     ) {}
 
+    /**
+     * Report whether the fake provider supports persistent session resume.
+     */
     public function canResume(ProjectAgent $agent): bool
     {
-        return false;
+        return $this->supportsResume;
     }
 
+    /**
+     * Simulate starting a fresh provider conversation and optionally return a persistent session identifier.
+     */
     public function start(
         ProjectAgent $agent,
         string $repositoryPath,
         string $prompt,
         ?array $schema = null,
         bool $writable = false,
+    ): AgentHarnessResult {
+        $this->startCalls++;
+
+        return $this->fakeResult(
+            $repositoryPath,
+            $prompt,
+            $writable,
+            $this->supportsResume ? 'feature09-provider-session-'.$this->startCalls : null,
+        );
+    }
+
+    /**
+     * Simulate resuming the requested provider conversation without creating a fresh session.
+     */
+    public function resume(
+        ProjectAgent $agent,
+        string $repositoryPath,
+        string $providerSessionId,
+        string $prompt,
+        ?array $schema = null,
+        bool $writable = false,
+    ): AgentHarnessResult {
+        $this->resumeCalls++;
+        $this->lastResumedProviderSessionId = $providerSessionId;
+
+        return $this->fakeResult(
+            $repositoryPath,
+            $prompt,
+            $writable,
+            $this->resumeProviderSessionId ?? $providerSessionId,
+        );
+    }
+
+    /**
+     * Execute the shared fake provider behavior while recording prompt and writable access.
+     */
+    private function fakeResult(
+        string $repositoryPath,
+        string $prompt,
+        bool $writable,
+        ?string $providerSessionId,
     ): AgentHarnessResult {
         $this->prompt = $prompt;
         $this->writable = $writable;
@@ -62,20 +119,9 @@ class Feature09FakeAgentHarness extends AgentHarness
         return new AgentHarnessResult(
             successful: true,
             output: $this->result,
-            providerSessionId: null,
+            providerSessionId: $providerSessionId,
             exitCode: 0,
         );
-    }
-
-    public function resume(
-        ProjectAgent $agent,
-        string $repositoryPath,
-        string $providerSessionId,
-        string $prompt,
-        ?array $schema = null,
-        bool $writable = false,
-    ): AgentHarnessResult {
-        return $this->start($agent, $repositoryPath, $prompt, $schema, $writable);
     }
 }
 
@@ -170,6 +216,110 @@ test('Agents execute from the Project directory without creating a Task worktree
         ->and($execution->harnessResult->successful)->toBeTrue();
 });
 
+test('a resumable Coder session persists and resumes the same provider conversation for the same Task', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness('Implemented.', supportsResume: true);
+    $runner = app(AgentExecutionRunner::class);
+
+    $firstExecution = $runner->run($task);
+    $firstSession = $firstExecution->run->agentSession()->firstOrFail();
+    $secondExecution = $runner->run($task);
+    $secondSession = $secondExecution->run->agentSession()->firstOrFail();
+
+    expect($harness->startCalls)->toBe(1)
+        ->and($harness->resumeCalls)->toBe(1)
+        ->and($harness->lastResumedProviderSessionId)->toBe('feature09-provider-session-1')
+        ->and($firstSession->id)->toBe($secondSession->id)
+        ->and($secondSession->provider_session_id)->toBe('feature09-provider-session-1')
+        ->and($firstExecution->run->attempt)->toBe(1)
+        ->and($firstExecution->run->context_mode)->toBe('initial')
+        ->and($secondExecution->run->attempt)->toBe(2)
+        ->and($secondExecution->run->context_mode)->toBe('delta')
+        ->and($secondSession->runs()->count())->toBe(2);
+});
+
+test('different Tasks use separate Coder sessions and start separate provider conversations', function () {
+    [, $workRequest, $firstTask] = feature09TaskFixture();
+    $secondTask = $workRequest->tasks()->create([
+        'position' => 2,
+        'title' => 'Add CONTRIBUTING.md',
+        'objective' => 'Document contribution rules.',
+        'implementation_spec' => '',
+        'acceptance_criteria' => [],
+        'verification_commands' => [],
+        'browser_steps' => [],
+        'status' => 'waiting',
+        'last_handoff' => ['to_role' => 'coder'],
+    ]);
+    $harness = feature09FakeHarness('Implemented.', supportsResume: true);
+    $runner = app(AgentExecutionRunner::class);
+
+    $firstExecution = $runner->run($firstTask);
+    $secondExecution = $runner->run($secondTask);
+    $firstSession = $firstExecution->run->agentSession()->firstOrFail();
+    $secondSession = $secondExecution->run->agentSession()->firstOrFail();
+
+    expect($harness->startCalls)->toBe(2)
+        ->and($harness->resumeCalls)->toBe(0)
+        ->and($firstSession->id)->not->toBe($secondSession->id)
+        ->and($firstSession->provider_session_id)->toBe('feature09-provider-session-1')
+        ->and($secondSession->provider_session_id)->toBe('feature09-provider-session-2');
+});
+
+test('different Agent roles use separate logical sessions for the same Task', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness('Completed.', supportsResume: true);
+    $runner = app(AgentExecutionRunner::class);
+
+    $coderExecution = $runner->run($task);
+    $task->update(['last_handoff' => ['to_role' => 'qa']]);
+    $qaExecution = $runner->run($task->refresh());
+    $coderSession = $coderExecution->run->agentSession()->firstOrFail();
+    $qaSession = $qaExecution->run->agentSession()->firstOrFail();
+
+    expect($harness->startCalls)->toBe(2)
+        ->and($harness->resumeCalls)->toBe(0)
+        ->and($coderExecution->run->role)->toBe('coder')
+        ->and($qaExecution->run->role)->toBe('qa')
+        ->and($coderSession->id)->not->toBe($qaSession->id)
+        ->and($coderSession->project_agent_id)->not->toBe($qaSession->project_agent_id);
+});
+
+test('a non-resumable provider keeps using fresh fallback invocations without persisting provider identity', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness('Implemented.');
+    $runner = app(AgentExecutionRunner::class);
+
+    $firstExecution = $runner->run($task);
+    $secondExecution = $runner->run($task);
+    $session = $secondExecution->run->agentSession()->firstOrFail();
+
+    expect($harness->startCalls)->toBe(2)
+        ->and($harness->resumeCalls)->toBe(0)
+        ->and($session->provider_session_id)->toBeNull()
+        ->and($firstExecution->run->context_mode)->toBe('initial')
+        ->and($secondExecution->run->context_mode)->toBe('initial');
+});
+
+test('a resumed provider cannot silently replace the persisted provider session identifier', function () {
+    [, , $task] = feature09TaskFixture();
+    $harness = feature09FakeHarness(
+        'Implemented.',
+        supportsResume: true,
+        resumeProviderSessionId: 'unexpected-provider-session',
+    );
+    $runner = app(AgentExecutionRunner::class);
+
+    $firstExecution = $runner->run($task);
+    $secondExecution = $runner->run($task);
+    $session = $firstExecution->run->agentSession()->firstOrFail()->refresh();
+
+    expect($secondExecution->harnessResult->successful)->toBeFalse()
+        ->and($secondExecution->harnessResult->failureMessage)->toContain('different session identifier')
+        ->and($session->provider_session_id)->toBe('feature09-provider-session-1')
+        ->and($harness->resumeCalls)->toBe(1);
+});
+
 test('ensureWorktree recovers from a stale branch and worktree left by a previous failed attempt', function () {
     [$project, , $task] = feature09TaskFixture();
     $repositoryPath = $project->path;
@@ -182,7 +332,7 @@ test('ensureWorktree recovers from a stale branch and worktree left by a previou
 
     // Simulate a prior attempt that created the branch and worktree, then had its directory
     // removed without going through `git worktree remove` (leaving the branch and the worktree's
-    // admin metadata behind) — exactly what made a retry fail with "Unable to create the isolated
+    // admin metadata behind), causing a retry to fail with "Unable to create the isolated
     // Task Git worktree." even though nothing was actually still using that branch or directory.
     Process::path($repositoryPath)->run(['git', 'worktree', 'add', '-b', $branchName, $worktreePath, 'HEAD'])->throw();
     File::deleteDirectory($worktreePath);
@@ -450,8 +600,7 @@ test('Run now requires a durable handoff before dispatching a Task', function ()
 });
 
 /**
- * Fake only the given command prefixes (e.g. 'git push', 'gh pr create') while letting every other
- * Process call — the real git verification commands TaskWorktreeManager still needs — run for real.
+ * Fake selected remote Git command prefixes while allowing TaskWorktreeManager verification commands to run for real.
  *
  * @param  array<string, (callable(): ProcessResult)>  $fakedPrefixes
  */
@@ -478,6 +627,8 @@ function feature09FakeRemoteGit(array $fakedPrefixes): void
 }
 
 /**
+ * Build a Project and WorkRequest fixture with the repository's default Agents provisioned.
+ *
  * @return array{0: Project, 1: WorkRequest}
  */
 function feature09Fixture(): array
@@ -496,6 +647,8 @@ function feature09Fixture(): array
 }
 
 /**
+ * Build a Task fixture already carrying a durable handoff to the configured Coder.
+ *
  * @return array{0: Project, 1: WorkRequest, 2: Task}
  */
 function feature09TaskFixture(): array
@@ -516,15 +669,29 @@ function feature09TaskFixture(): array
     return [$project, $workRequest, $task];
 }
 
-function feature09FakeHarness(string|Throwable $result, ?callable $sideEffect = null): Feature09FakeAgentHarness
-{
-    $harness = new Feature09FakeAgentHarness($result, $sideEffect);
+/**
+ * Bind a deterministic fake Agent harness for the current test.
+ */
+function feature09FakeHarness(
+    string|Throwable $result,
+    ?callable $sideEffect = null,
+    bool $supportsResume = false,
+    ?string $resumeProviderSessionId = null,
+): Feature09FakeAgentHarness {
+    $harness = new Feature09FakeAgentHarness(
+        $result,
+        $sideEffect,
+        $supportsResume,
+        $resumeProviderSessionId,
+    );
     app()->instance(AgentHarness::class, $harness);
 
     return $harness;
 }
 
 /**
+ * Build a Project Manager completion payload with the supplied overrides.
+ *
  * @param  array<string, mixed>  $overrides
  */
 function feature09PmCompletion(array $overrides): string
@@ -536,6 +703,8 @@ function feature09PmCompletion(array $overrides): string
 }
 
 /**
+ * Build a generic Agent completion payload with the supplied overrides.
+ *
  * @param  array<string, mixed>  $overrides
  */
 function feature09Completion(array $overrides): string
@@ -546,6 +715,9 @@ function feature09Completion(array $overrides): string
     ], $overrides), JSON_THROW_ON_ERROR);
 }
 
+/**
+ * Create a temporary initialized Git repository for filesystem-backed workflow tests.
+ */
 function feature09TemporaryGitRepository(): string
 {
     $path = sys_get_temp_dir().'/aisf-feature09-'.Str::uuid();
@@ -562,7 +734,11 @@ function feature09TemporaryGitRepository(): string
     return $path;
 }
 
-/** @return array{0: AgentRun, 1: string} */
+/**
+ * Extract the durable AgentRun and execution token embedded in the provider prompt.
+ *
+ * @return array{0: AgentRun, 1: string}
+ */
 function feature09RunAuthorization(string $prompt): array
 {
     preg_match('/Agent run ID: (\d+)/', $prompt, $runMatch);
@@ -571,7 +747,11 @@ function feature09RunAuthorization(string $prompt): array
     return [AgentRun::query()->findOrFail((int) $runMatch[1]), $tokenMatch[1]];
 }
 
-/** @return array<string, mixed> */
+/**
+ * Build a valid durable AgentRun context for direct session-manager tests.
+ *
+ * @return array<string, mixed>
+ */
 function feature09RunContext(string $role): array
 {
     return [

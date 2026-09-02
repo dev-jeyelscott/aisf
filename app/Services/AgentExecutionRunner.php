@@ -14,6 +14,9 @@ use UnexpectedValueException;
 /** Run one provider turn while leaving every workflow decision to durable reconciliation. */
 class AgentExecutionRunner
 {
+    /**
+     * Inject the provider harness, session manager, prompt composer, and durable Task context builder.
+     */
     public function __construct(
         private readonly AgentHarness $harness,
         private readonly AgentSessionManager $sessionManager,
@@ -21,6 +24,9 @@ class AgentExecutionRunner
         private readonly TaskContextBuilder $taskContextBuilder,
     ) {}
 
+    /**
+     * Execute one durable Agent run, resuming the provider conversation when the logical session supports continuity.
+     */
     public function run(Task|WorkRequest $subject, ?string $operatorInstruction = null): AgentTurnExecution
     {
         $role = $this->roleFor($subject);
@@ -33,6 +39,11 @@ class AgentExecutionRunner
         }
 
         $session = $this->sessionManager->forSubject($agent, $subject);
+        $providerSessionId = filled($session->provider_session_id)
+            ? (string) $session->provider_session_id
+            : null;
+        $resumingProviderSession = $providerSessionId !== null
+            && $this->harness->canResume($agent);
         [$repositoryPath, $writable] = $this->executionTarget($subject);
         $promptContext = $this->promptComposer->compose($agent, $subject, $repositoryPath, $operatorInstruction);
         $executionToken = Str::random(64);
@@ -44,7 +55,7 @@ class AgentExecutionRunner
         }
 
         $run = $this->sessionManager->startRun($session, $role, [
-            'mode' => 'initial',
+            'mode' => $resumingProviderSession ? 'delta' : 'initial',
             'input' => $prompt,
             'sources' => $promptContext['sources'],
             'agent_snapshot' => $promptContext['snapshot']['agent'],
@@ -64,7 +75,17 @@ class AgentExecutionRunner
         ]);
 
         try {
-            $result = $this->harness->start($agent, $repositoryPath, $prompt, writable: $writable);
+            $result = $resumingProviderSession
+                ? $this->harness->resume(
+                    $agent,
+                    $repositoryPath,
+                    $providerSessionId,
+                    $prompt,
+                    writable: $writable,
+                )
+                : $this->harness->start($agent, $repositoryPath, $prompt, writable: $writable);
+
+            $this->sessionManager->captureProviderSessionId($session, $result->providerSessionId);
         } catch (Throwable $exception) {
             $result = new AgentHarnessResult(false, null, null, null, $exception->getMessage());
         }
@@ -72,6 +93,9 @@ class AgentExecutionRunner
         return new AgentTurnExecution($run, $result, $this->informationalSummary($result));
     }
 
+    /**
+     * Reduce provider terminal output to an informational summary without treating it as workflow truth.
+     */
     private function informationalSummary(AgentHarnessResult $result): string
     {
         $output = trim((string) $result->output);
@@ -93,6 +117,9 @@ class AgentExecutionRunner
         return Str::limit(trim((string) $result->failureMessage) ?: 'Agent execution returned no terminal summary.', 2000, '');
     }
 
+    /**
+     * Resolve the Agent role authorized by the durable WorkRequest or accepted Task handoff.
+     */
     private function roleFor(Task|WorkRequest $subject): string
     {
         if ($subject instanceof WorkRequest) {
@@ -108,6 +135,9 @@ class AgentExecutionRunner
         return (string) $toRole;
     }
 
+    /**
+     * Resolve the workflow execution mode from the durable subject state and latest accepted handoff.
+     */
     private function modeFor(Task|WorkRequest $subject): string
     {
         if ($subject instanceof WorkRequest) {
@@ -117,6 +147,9 @@ class AgentExecutionRunner
         return (string) ($subject->last_handoff['reason'] ?? 'implementation_ready');
     }
 
+    /**
+     * Resolve the Project that owns the Task or WorkRequest execution subject.
+     */
     private function projectFor(Task|WorkRequest $subject): Project
     {
         if ($subject instanceof WorkRequest) {
@@ -130,7 +163,11 @@ class AgentExecutionRunner
         return $subject->workRequest->project;
     }
 
-    /** @return array{0: string, 1: bool} */
+    /**
+     * Resolve the repository path and whether this role is authorized to write implementation changes.
+     *
+     * @return array{0: string, 1: bool}
+     */
     private function executionTarget(Task|WorkRequest $subject): array
     {
         $writable = $subject instanceof Task
@@ -139,6 +176,9 @@ class AgentExecutionRunner
         return [(string) $this->projectFor($subject)->path, $writable];
     }
 
+    /**
+     * Build the durable workflow contract for the currently authorized role and execution mode.
+     */
     private function contractSection(Task|WorkRequest $subject, string $role, string $mode): string
     {
         if ($subject instanceof WorkRequest) {
